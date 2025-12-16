@@ -9,7 +9,7 @@ const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const HOST = "0.0.0.0";
+const HOST = "0.0.00";
 
 // AGREGADO: Habilitar CORS para todas las rutas y orígenes
 app.use(cors()); 
@@ -577,9 +577,38 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
     return canvas.toBuffer('image/png');
 };
 
+/**
+ * Función auxiliar para dividir texto en líneas que caben dentro de un ancho máximo.
+ * @param {CanvasRenderingContext2D} ctx - Contexto del canvas.
+ * @param {string} text - Texto a envolver.
+ * @param {number} maxWidth - Ancho máximo permitido para el texto.
+ * @param {number} lineHeight - Altura de línea.
+ * @returns {Array<{text: string, height: number}>} Lista de líneas con la altura total.
+ */
+const wrapText = (ctx, text, maxWidth, lineHeight) => {
+    const words = text.split(' ');
+    let line = '';
+    const lines = [];
+
+    for (let i = 0; i < words.length; i++) {
+        const testLine = line + words[i] + ' ';
+        const metrics = ctx.measureText(testLine);
+        const testWidth = metrics.width;
+
+        if (testWidth > maxWidth && i > 0) {
+            lines.push(line.trim());
+            line = words[i] + ' ';
+        } else {
+            line = testLine;
+        }
+    }
+    lines.push(line.trim());
+    return { lines, height: lines.length * lineHeight };
+};
+
 
 // ==============================================================================
-//  FUNCIONES DE DIBUJO (ACTA DE MATRIMONIO) - MODIFICADA PARA USAR EL DISEÑO SUBIDO
+//  FUNCIONES DE DIBUJO (ACTA DE MATRIMONIO) - MODIFICADA
 // ==============================================================================
 
 /**
@@ -587,10 +616,10 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
  */
 const generateMarriageCertificateImage = async (rawDocumento, principal, data) => {
     
-    // --- NUEVAS CONSTANTES DE DISEÑO BASADAS EN LA IMAGEN SUBIDA ---
+    // --- CONSTANTES DE DISEÑO BASADAS EN LA IMAGEN SUBIDA ---
     const API_TITLE = "Acta";
     const API_SUBTITLE = "MATRIMONIO";
-    const BRAND_NAME = "Industrias López";
+    const BRAND_NAME = "Consulta pe apk"; // MODIFICACIÓN: Nuevo texto de marca
     const CANVAS_WIDTH = 900; // Ajustado para un diseño de documento
     const CANVAS_HEIGHT = 1000;
     const MARGIN_X = 50;
@@ -598,13 +627,14 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
     const INNER_WIDTH = CANVAS_WIDTH - 2 * MARGIN_X;
     const CELL_PADDING = 15;
     const ROW_HEIGHT = 40;
-    const LARGE_ROW_HEIGHT = 50;
+    const LINE_HEIGHT = 18; // Altura base para el salto de línea
+    const MIN_ROW_HEIGHT = 50; // Altura mínima de la fila para la tabla principal
     
     // 1. Generación del Canvas
     const canvas = createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
     const ctx = canvas.getContext("2d");
 
-    // Fondo Blanco Puro (para replicar el diseño minimalista)
+    // Fondo Blanco Puro
     ctx.fillStyle = BACKGROUND_COLOR; 
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
@@ -627,26 +657,10 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
     ctx.textAlign = 'right';
     ctx.fillStyle = COLOR_TITLE;
     ctx.font = `bold 20px ${FONT_FAMILY}`;
-    ctx.fillText(BRAND_NAME, CANVAS_WIDTH - MARGIN_X, MARGIN_Y + 10);
-    // Simulación de icono (tres triángulos)
-    ctx.beginPath();
-    const logoX = CANVAS_WIDTH - MARGIN_X - ctx.measureText(BRAND_NAME).width - 10;
-    const logoY = MARGIN_Y;
-    ctx.moveTo(logoX, logoY + 15);
-    ctx.lineTo(logoX + 15, logoY);
-    ctx.lineTo(logoX + 30, logoY + 15);
-    ctx.closePath();
-    ctx.fillStyle = '#000000'; // Negro
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(logoX + 5, logoY + 20);
-    ctx.lineTo(logoX + 20, logoY + 5);
-    ctx.lineTo(logoX + 35, logoY + 20);
-    ctx.closePath();
-    ctx.fillStyle = '#666666'; // Gris oscuro
-    ctx.fill();
+    // MODIFICACIÓN: Reemplazo del logo y texto por "Consulta pe apk"
+    ctx.fillText(BRAND_NAME, CANVAS_WIDTH - MARGIN_X, MARGIN_Y + 30); 
 
-    // Línea separadora (no visible en la imagen, pero ayuda a la estructura)
+    // Línea separadora
     currentY = 120;
     
     // 3. SECCIÓN 1: Información (Matrimonio)
@@ -658,9 +672,10 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
 
     currentY += 10;
     
-    // Dibuja la tabla de 2x4 (Filas de la sección Información)
-    const infoRows = [
+    // Datos de la sección Información
+    const rawInfoData = [
         ["Fecha de Matrimonio", data.fecha_matrimonio || 'N/A', "Registro Único", data.registro_unico || 'N/A'],
+        // Campos con posible salto de línea
         ["Oficina de Registro", data.oficina_registro || 'N/A', "Nro. de Acta", data.nro_acta || 'N/A'],
         ["Departamento", data.departamento || 'N/A', "Provincia", data.provincia || 'N/A'],
         ["Distrito", data.distrito || data.lugar || 'N/A', "Régimen Patrimonial", data.regimen_patrimonial || 'N/A']
@@ -670,57 +685,104 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
     const infoCol2Width = INNER_WIDTH / 2 - infoCol1Width;
     const infoCol3Width = 180;
     const infoCol4Width = INNER_WIDTH / 2 - infoCol3Width;
-    
-    infoRows.forEach((row, index) => {
-        const startY = currentY + index * LARGE_ROW_HEIGHT;
+
+    // Campos a los que se aplica el ajuste de texto y estiramiento de fila
+    const wrapFieldsIndices = [1, 2, 3]; // Índice de las filas con texto largo: Oficina, Departamento, Distrito
+
+    rawInfoData.forEach((row, rowIndex) => {
+        let rowHeight = MIN_ROW_HEIGHT;
+        let startY = currentY;
+
+        // --- 1. PREPARACIÓN Y CÁLCULO DE ALTURA DE FILA ---
+        ctx.font = `bold 14px ${FONT_FAMILY}`;
+        const shouldWrap = wrapFieldsIndices.includes(rowIndex);
+
+        let wrappedCol2 = { lines: [String(row[1]).toUpperCase()], height: MIN_ROW_HEIGHT };
+        let wrappedCol4 = { lines: [String(row[3]).toUpperCase()], height: MIN_ROW_HEIGHT };
+
+        if (shouldWrap) {
+            // Columna 2: Oficina de Registro, Departamento
+            wrappedCol2 = wrapText(ctx, String(row[1]).toUpperCase(), infoCol2Width - 2 * CELL_PADDING, LINE_HEIGHT);
+            // Columna 4: Nro. de Acta, Provincia
+            wrappedCol4 = wrapText(ctx, String(row[3]).toUpperCase(), infoCol4Width - 2 * CELL_PADDING, LINE_HEIGHT);
+            
+            // La altura de la fila es determinada por el texto más largo + un padding de celda.
+            const maxTextHeight = Math.max(wrappedCol2.height, wrappedCol4.height);
+            rowHeight = Math.max(MIN_ROW_HEIGHT, maxTextHeight + 2 * (CELL_PADDING - 5));
+        }
+
+        // --- 2. DIBUJO DE LA FILA (FONDOS Y BORDES) ---
         
+        // FONDOS
         // Columna 1 (Etiqueta 1)
         ctx.fillStyle = HEADER_BACKGROUND_COLOR;
-        ctx.fillRect(MARGIN_X, startY, infoCol1Width, LARGE_ROW_HEIGHT);
-        ctx.fillStyle = TABLE_HEADER_COLOR;
-        ctx.font = `14px ${FONT_FAMILY}`;
-        ctx.fillText(row[0], MARGIN_X + CELL_PADDING, startY + LARGE_ROW_HEIGHT / 2 + 5);
-        
+        ctx.fillRect(MARGIN_X, startY, infoCol1Width, rowHeight);
         // Columna 2 (Valor 1)
         ctx.fillStyle = BACKGROUND_COLOR;
-        ctx.fillRect(MARGIN_X + infoCol1Width, startY, infoCol2Width, LARGE_ROW_HEIGHT);
-        ctx.fillStyle = COLOR_TEXT;
-        ctx.font = `bold 14px ${FONT_FAMILY}`;
-        ctx.fillText(String(row[1]).toUpperCase(), MARGIN_X + infoCol1Width + CELL_PADDING, startY + LARGE_ROW_HEIGHT / 2 + 5);
-        
+        ctx.fillRect(MARGIN_X + infoCol1Width, startY, infoCol2Width, rowHeight);
         // Columna 3 (Etiqueta 2)
         ctx.fillStyle = HEADER_BACKGROUND_COLOR;
-        ctx.fillRect(MARGIN_X + INNER_WIDTH / 2, startY, infoCol3Width, LARGE_ROW_HEIGHT);
-        ctx.fillStyle = TABLE_HEADER_COLOR;
-        ctx.font = `14px ${FONT_FAMILY}`;
-        ctx.fillText(row[2], MARGIN_X + INNER_WIDTH / 2 + CELL_PADDING, startY + LARGE_ROW_HEIGHT / 2 + 5);
-        
+        ctx.fillRect(MARGIN_X + INNER_WIDTH / 2, startY, infoCol3Width, rowHeight);
         // Columna 4 (Valor 2)
         ctx.fillStyle = BACKGROUND_COLOR;
-        ctx.fillRect(MARGIN_X + INNER_WIDTH / 2 + infoCol3Width, startY, infoCol4Width, LARGE_ROW_HEIGHT);
-        ctx.fillStyle = COLOR_TEXT;
-        ctx.font = `bold 14px ${FONT_FAMILY}`;
-        ctx.fillText(String(row[3]).toUpperCase(), MARGIN_X + INNER_WIDTH / 2 + infoCol3Width + CELL_PADDING, startY + LARGE_ROW_HEIGHT / 2 + 5);
+        ctx.fillRect(MARGIN_X + INNER_WIDTH / 2 + infoCol3Width, startY, infoCol4Width, rowHeight);
         
-        // Dibuja los bordes
+        // BORDES
         ctx.strokeStyle = TABLE_BORDER_COLOR;
         ctx.lineWidth = 1;
-        ctx.strokeRect(MARGIN_X, startY, INNER_WIDTH, LARGE_ROW_HEIGHT);
+        ctx.strokeRect(MARGIN_X, startY, INNER_WIDTH, rowHeight);
+        // Bordes internos verticales
         ctx.beginPath();
         ctx.moveTo(MARGIN_X + infoCol1Width, startY);
-        ctx.lineTo(MARGIN_X + infoCol1Width, startY + LARGE_ROW_HEIGHT);
+        ctx.lineTo(MARGIN_X + infoCol1Width, startY + rowHeight);
         ctx.stroke();
         ctx.beginPath();
         ctx.moveTo(MARGIN_X + INNER_WIDTH / 2 + infoCol3Width, startY);
-        ctx.lineTo(MARGIN_X + INNER_WIDTH / 2 + infoCol3Width, startY + LARGE_ROW_HEIGHT);
+        ctx.lineTo(MARGIN_X + INNER_WIDTH / 2 + infoCol3Width, startY + rowHeight);
         ctx.stroke();
         ctx.beginPath();
         ctx.moveTo(MARGIN_X + INNER_WIDTH / 2, startY);
-        ctx.lineTo(MARGIN_X + INNER_WIDTH / 2, startY + LARGE_ROW_HEIGHT);
+        ctx.lineTo(MARGIN_X + INNER_WIDTH / 2, startY + rowHeight);
         ctx.stroke();
-    });
 
-    currentY += infoRows.length * LARGE_ROW_HEIGHT;
+        // --- 3. DIBUJO DE TEXTO ---
+        const textYCenterOffset = rowHeight / 2 + 5; // Centro vertical para texto de una línea
+
+        // Columna 1 (Etiqueta 1)
+        ctx.fillStyle = TABLE_HEADER_COLOR;
+        ctx.font = `14px ${FONT_FAMILY}`;
+        ctx.fillText(row[0], MARGIN_X + CELL_PADDING, startY + textYCenterOffset);
+        
+        // Columna 3 (Etiqueta 2)
+        ctx.fillStyle = TABLE_HEADER_COLOR;
+        ctx.font = `14px ${FONT_FAMILY}`;
+        ctx.fillText(row[2], MARGIN_X + INNER_WIDTH / 2 + CELL_PADDING, startY + textYCenterOffset);
+
+        // Columna 2 (Valor 1 - Ajuste de Texto)
+        ctx.fillStyle = COLOR_TEXT;
+        ctx.font = `bold 14px ${FONT_FAMILY}`;
+        let textY = startY + CELL_PADDING + 5;
+        if (shouldWrap) {
+            wrappedCol2.lines.forEach((line, i) => {
+                ctx.fillText(line, MARGIN_X + infoCol1Width + CELL_PADDING, startY + (rowHeight / 2) - (wrappedCol2.height / 2) + (i * LINE_HEIGHT) + (LINE_HEIGHT/2) + 5);
+            });
+        } else {
+            ctx.fillText(wrappedCol2.lines[0], MARGIN_X + infoCol1Width + CELL_PADDING, startY + textYCenterOffset);
+        }
+        
+        // Columna 4 (Valor 2 - Ajuste de Texto)
+        ctx.fillStyle = COLOR_TEXT;
+        ctx.font = `bold 14px ${FONT_FAMILY}`;
+        if (shouldWrap) {
+            wrappedCol4.lines.forEach((line, i) => {
+                ctx.fillText(line, MARGIN_X + INNER_WIDTH / 2 + infoCol3Width + CELL_PADDING, startY + (rowHeight / 2) - (wrappedCol4.height / 2) + (i * LINE_HEIGHT) + (LINE_HEIGHT/2) + 5);
+            });
+        } else {
+            ctx.fillText(wrappedCol4.lines[0], MARGIN_X + INNER_WIDTH / 2 + infoCol3Width + CELL_PADDING, startY + textYCenterOffset);
+        }
+
+        currentY += rowHeight;
+    });
     
     // 4. SECCIÓN 2: Asistentes (Cónyuges y Observaciones)
     currentY += 30;
@@ -737,8 +799,7 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
     // Fila de encabezado
     currentY += 5;
     ctx.fillStyle = HEADER_BACKGROUND_COLOR;
-    ctx.fillRect(MARGIN_X, currentY, INNER_WIDTH / 2, ROW_HEIGHT);
-    ctx.fillRect(MARGIN_X + INNER_WIDTH / 2, currentY, INNER_WIDTH / 2, ROW_HEIGHT);
+    ctx.fillRect(MARGIN_X, currentY, INNER_WIDTH, ROW_HEIGHT);
     ctx.strokeStyle = TABLE_BORDER_COLOR;
     ctx.lineWidth = 1;
     ctx.strokeRect(MARGIN_X, currentY, INNER_WIDTH, ROW_HEIGHT);
@@ -758,8 +819,6 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
     const conyugeRows = [
         ["Cónyuge Principal (1)", `${conyuge1.nombres} ${conyuge1.apellido_paterno} ${conyuge1.apellido_materno} (DNI: ${conyuge1.dni})`],
         ["Cónyuge Pareja (2)", `${conyuge2.nombres} ${conyuge2.apellido_paterno} ${conyuge2.apellido_materno} (DNI: ${conyuge2.dni})`],
-        // Asumiendo que los padres o testigos pueden estar en los datos
-        // NOTA: No hay campos específicos para "testigos" en el JSON original, solo se simula el diseño.
         ["Estado Civil Anterior C1", data.estado_civil_c1 || 'N/A'],
         ["Estado Civil Anterior C2", data.estado_civil_c2 || 'N/A']
     ];
@@ -817,7 +876,6 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
     // Wrap text para las observaciones
     const words = obsText.split(' ');
     let line = '';
-    const lineHeight = 18;
     let textY = currentY + CELL_PADDING + 5;
     
     for (let i = 0; i < words.length; i++) {
@@ -825,7 +883,7 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
         if (ctx.measureText(testLine).width > INNER_WIDTH - 2 * CELL_PADDING && i > 0) {
             ctx.fillText(line.trim(), MARGIN_X + CELL_PADDING, textY);
             line = words[i] + ' ';
-            textY += lineHeight;
+            textY += LINE_HEIGHT;
         } else {
             line = testLine;
         }
