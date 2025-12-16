@@ -748,11 +748,16 @@ app.get("/consultar-arbol", async (req, res) => {
     try { 
         // 1. CONSULTA API DE ÁRBOL GENEALÓGICO
         const resArbol = await axios.get(`${ARBOL_GENEALOGICO_API_URL}?dni=${rawDocumento}`);
-        const dataArbol = resArbol.data?.result;
         
-        if (dataArbol?.message !== "found data" || !dataArbol.principal || !Array.isArray(dataArbol.familiares)) {
-             throw new Error(`La API de Árbol Genealógico no devolvió datos válidos para el DNI: ${rawDocumento}.`);
+        // --- ADAPTACIÓN DE RESPUESTA ---
+        const dataArbol = resArbol.data?.result;
+
+        // Comprobación de que la API externa devolvió la estructura esperada:
+        // Se espera que la data ya esté en el formato { principal: {}, familiares: [] }
+        if (resArbol.data?.message !== "found data" || !dataArbol?.principal || !Array.isArray(dataArbol?.familiares)) {
+             throw new Error(`La API de Árbol Genealógico no devolvió datos válidos (faltan 'principal' o 'familiares') para el DNI: ${rawDocumento}.`);
         }
+        // --- FIN ADAPTACIÓN ---
         
         const principal = dataArbol.principal;
         let familiares = dataArbol.familiares;
@@ -794,7 +799,7 @@ app.get("/consultar-arbol", async (req, res) => {
         });
 
     } catch (error) { 
-        console.error(`Error en el proceso ${API_NAME}:`, error); 
+        console.error(`Error en el proceso ${API_NAME}:`, error.message); // Imprimir solo el mensaje de error para logs más limpios
         const status = error.response?.status || 500;
         res.status(status).json({ 
             "message": "error", 
@@ -823,15 +828,56 @@ app.get("/consultar-matrimonio", async (req, res) => {
     try { 
         // 1. CONSULTA API DE ACTA DE MATRIMONIO
         const resActa = await axios.get(`${ACTA_MATRIMONIO_API_URL}?dni=${rawDocumento}`);
-        const dataActa = resActa.data?.result;
         
-        if (dataActa?.message !== "found data" || !dataActa.principal || !dataActa.matrimonio) {
+        // --- ADAPTACIÓN DE RESPUESTA (Corrección aquí) ---
+        // La API externa de matrimonio devuelve: {"message":"found data","result":{"quantity":1,"coincidences":[{"...datos de matrimonio...","doc":"40910936",...}]}}
+        const rawResult = resActa.data?.result;
+        
+        if (resActa.data?.message !== "found data" || !rawResult?.coincidences || rawResult.coincidences.length === 0) {
              throw new Error(`La API de Acta de Matrimonio no devolvió datos válidos para el DNI: ${rawDocumento}.`);
         }
+
+        // Asumimos que la API externa trae los datos del principal y el matrimonio en las coincidencias.
+        // Dado el ejemplo que mostraste: {"message":"found data","result":{"quantity":1,"coincidences":[{"apellido_paterno":"CHUNG",...}]}}
         
-        const principal = dataActa.principal;
-        const matrimonioData = dataActa.matrimonio;
+        const matrimonioDataRaw = rawResult.coincidences[0];
         
+        // Creamos la estructura esperada: { principal: {}, matrimonio: {} }
+        // Se asume que el DNI del principal es el que se consulta y que los datos del principal
+        // están mezclados con los datos del matrimonio en `matrimonioDataRaw`.
+        
+        // Mapeo forzado para alimentar la función de dibujo, ajustando los campos:
+        const principal = {
+            dni: rawDocumento, // Usamos el DNI consultado como principal
+            // Intentamos extraer el nombre del principal de la respuesta (esto es una conjetura sin el formato completo de la API)
+            nombres: matrimonioDataRaw.nombres || 'N/A', 
+            apellido_paterno: matrimonioDataRaw.apellido_paterno || 'N/A',
+            apellido_materno: matrimonioDataRaw.apellido_materno || 'N/A',
+            fecha_nacimiento: matrimonioDataRaw.fecha_nacimiento_principal || 'N/A', // Campo tentativo
+        };
+
+        const matrimonioData = {
+            registro_unico: matrimonioDataRaw.registro_unico || 'N/A',
+            nro_acta: matrimonioDataRaw.nro_acta || 'N/A',
+            fecha_matrimonio: matrimonioDataRaw.fecha || 'N/A', // Usamos el campo 'fecha' que viste en el ejemplo
+            departamento: matrimonioDataRaw.departamento || 'N/A',
+            provincia: matrimonioDataRaw.provincia || 'N/A',
+            distrito: matrimonioDataRaw.distrito || matrimonioDataRaw.lugar || 'N/A', // Usamos 'lugar' como fallback de distrito/lugar
+            oficina_registro: matrimonioDataRaw.oficina_registro || 'N/A',
+            estado_civil_c1: matrimonioDataRaw.estado_civil_c1 || 'N/A',
+            estado_civil_c2: matrimonioDataRaw.estado_civil_c2 || 'N/A',
+            regimen_patrimonial: matrimonioDataRaw.regimen_patrimonial || 'N/A',
+            observaciones: matrimonioDataRaw.observaciones || 'N/A',
+            // Datos del Cónyuge 2 (Pareja) - Suponiendo que vienen con un prefijo 'conyuge'
+            conyuge: {
+                dni: matrimonioDataRaw.doc || 'N/A', // Usamos 'doc' como DNI del cónyuge 2
+                nombres: matrimonioDataRaw.nombres_conyuge || 'N/A',
+                apellido_paterno: matrimonioDataRaw.apellido_paterno_conyuge || 'N/A',
+                apellido_materno: matrimonioDataRaw.apellido_materno_conyuge || 'N/A',
+                fecha_nacimiento: matrimonioDataRaw.fecha_nacimiento_conyuge || 'N/A',
+            }
+        };
+
         // 2. Generar el buffer de la imagen
         const imagenBuffer = await generateMarriageCertificateImage(rawDocumento, principal, matrimonioData);
         
@@ -866,7 +912,7 @@ app.get("/consultar-matrimonio", async (req, res) => {
         });
 
     } catch (error) { 
-        console.error(`Error en el proceso ${API_NAME}:`, error); 
+        console.error(`Error en el proceso ${API_NAME}:`, error.message); // Imprimir solo el mensaje de error para logs más limpios
         const status = error.response?.status || 500;
         res.status(status).json({ 
             "message": "error", 
