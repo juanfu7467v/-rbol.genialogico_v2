@@ -265,6 +265,7 @@ const VERTICAL_SPACING = 100;
 
 /**
  * Obtiene el color de fondo de la caja basado en el parentesco (imitando el diseño de la imagen).
+ * MODIFICACIÓN CLAVE: Colores definidos según parentesco.
  */
 const getBoxColorByParentesco = (parentescoText, isPrincipal) => {
     if (isPrincipal) {
@@ -273,13 +274,24 @@ const getBoxColorByParentesco = (parentescoText, isPrincipal) => {
     
     parentescoText = (parentescoText || '').toUpperCase();
     
+    // Padres y Madres: Ámbar
     if (parentescoText.includes('PADRE') || parentescoText.includes('MADRE')) {
-        return '#FFAB00'; // Ámbar - PADRES (como el color naranja en la imagen)
-    } else if (parentescoText.includes('HERMANO') || parentescoText.includes('HERMANA')) {
-        return '#64DD17'; // Verde Lima - HERMANOS (como el color amarillo/lima en la imagen)
-    } else if (parentescoText.includes('HIJO') || parentescoText.includes('HIJA') || parentescoText.includes('SOBRINO') || parentescoText.includes('SOBRINA')) {
-        return '#3F51B5'; // Azul Oscuro - DESCENDIENTES (como el color azul en la imagen)
-    } else {
+        return '#FFAB00'; // Ámbar - PADRES 
+    } 
+    // Hermanos y Hermanas: Verde Lima
+    else if (parentescoText.includes('HERMANO') || parentescoText.includes('HERMANA')) {
+        return '#64DD17'; // Verde Lima - HERMANOS
+    } 
+    // Descendientes (Hijos, Hijas): Azul Oscuro
+    else if (parentescoText.includes('HIJO') || parentescoText.includes('HIJA')) {
+        return '#3F51B5'; // Azul Oscuro - HIJOS
+    } 
+    // Primos y Tíos/Sobrinos: Púrpura/Gris
+    else if (parentescoText.includes('TIO') || parentescoText.includes('TIA') || parentescoText.includes('SOBRINO') || parentescoText.includes('SOBRINA') || parentescoText.includes('PRIMO') || parentescoText.includes('PRIMA')) {
+         return '#7B1FA2'; // Púrpura - Tíos/Sobrinos/Primos
+    }
+    // Otros: Gris
+    else {
         return '#9E9E9E'; // Gris - OTROS
     }
 };
@@ -287,6 +299,7 @@ const getBoxColorByParentesco = (parentescoText, isPrincipal) => {
 
 /**
  * Dibuja un nodo (caja) en el Árbol Genealógico, imitando el estilo de la imagen subida.
+ * MODIFICACIÓN CLAVE: Diseño de la caja para mostrar 4 "columnas" de información interna.
  */
 const drawTreeNode = (ctx, data, x, y, isPrincipal, parentesco) => {
     
@@ -294,61 +307,83 @@ const drawTreeNode = (ctx, data, x, y, isPrincipal, parentesco) => {
     const parentescoText = (isPrincipal ? 'PRINCIPAL' : (parentesco || 'FAMILIAR')).toUpperCase().replace('N/A', 'FAMILIAR');
     const boxColor = getBoxColorByParentesco(parentesco, isPrincipal);
     const textColor = '#FFFFFF';
-    // El diseño de la imagen no tiene borde visible en la caja, sino un estilo plano.
-    // Usaremos un pequeño 'sombreado' para simular profundidad (opcional) o simplemente el color plano.
 
     // 2. Dibuja la Caja de Fondo (Rectángulo plano)
     ctx.fillStyle = boxColor;
     ctx.fillRect(x, y, TREE_NODE_WIDTH, TREE_NODE_HEIGHT);
     
-    // Opcional: Sombra sutil para el efecto de levantamiento
-    // ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    // ctx.shadowBlur = 4;
-    // ctx.shadowOffsetX = 2;
-    // ctx.shadowOffsetY = 2;
-    // ctx.fillRect(x, y, TREE_NODE_WIDTH, TREE_NODE_HEIGHT);
-    // ctx.shadowColor = 'transparent'; // Desactivar sombra para el texto
-    
-    // 3. Dibujar Texto
+    // 3. Dibujar Texto (Simulando la estructura de 4 columnas de información dentro de la caja)
     const formattedData = getFormattedPersonData(data);
     const fullName = `${formattedData.nombres} ${formattedData.apellido_paterno} ${formattedData.apellido_materno}`.trim();
+    
+    // Usamos el ancho de la caja (TREE_NODE_WIDTH) y la altura para dividir el contenido.
+    // La distribución es: 
+    // Fila 1 (Col 1-4): Parentesco (Centralizado, Ancho Completo)
+    // Fila 2 (Col 1-2): Nombre/Apellido Paterno | Fila 2 (Col 3-4): Apellido Materno
+    // Fila 3 (Col 1-4): DNI (Centralizado, Ancho Completo)
 
     ctx.fillStyle = textColor;
-    ctx.textAlign = 'center';
+    ctx.textAlign = 'left';
     
-    // Parentesco (Línea 1: Más grande)
-    ctx.font = `bold 22px ${FONT_FAMILY}`;
-    ctx.fillText(parentescoText, x + TREE_NODE_WIDTH / 2, y + 30);
+    // --- COLUMNA 1-4 (Ancho Completo) ---
+    // Fila 1: Parentesco (Título Principal)
+    ctx.font = `bold 20px ${FONT_FAMILY}`;
+    ctx.textAlign = 'center'; // Centrado en la caja
+    ctx.fillText(parentescoText, x + TREE_NODE_WIDTH / 2, y + 25);
     
-    // Línea separadora blanca sutil (imitando el diseño)
+    // Línea separadora blanca sutil
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(x + 10, y + 40);
-    ctx.lineTo(x + TREE_NODE_WIDTH - 10, y + 40);
+    ctx.moveTo(x + 5, y + 35);
+    ctx.lineTo(x + TREE_NODE_WIDTH - 5, y + 35);
     ctx.stroke();
     
-    // Nombre (Línea 2: Un poco más pequeño y ajustado)
-    ctx.font = `bold 16px ${FONT_FAMILY}`;
-    // Ajustar el texto si es muy largo
-    let nameText = fullName;
-    if (ctx.measureText(fullName).width > (TREE_NODE_WIDTH - 20)) {
-        // Intentar acortar y usar solo nombres y 1 apellido
-        const parts = fullName.split(' ');
-        if (parts.length >= 3) {
-            nameText = `${parts[0]} ${parts[1]}...`; // Nombre y Apellido Paterno, seguido de puntos
-        } else {
-             nameText = fullName.substring(0, 15) + '...'; // Acortar si es necesario
-        }
-    }
+    ctx.textAlign = 'left'; // Reset a la izquierda para los datos
+    const PADDING = 10;
+    const QUARTER_WIDTH = (TREE_NODE_WIDTH - 2 * PADDING) / 4; // Ancho para 4 columnas internas (aproximadamente)
+    const HALF_WIDTH = TREE_NODE_WIDTH / 2;
     
-    // Si el nombre sigue siendo muy largo, podría requerir 2 líneas, pero mantendremos 1 para imitar el formato.
-    ctx.fillText(nameText, x + TREE_NODE_WIDTH / 2, y + 65);
-    
-    // DNI (Línea 3: Más pequeño)
+    // Separamos los nombres para simular el layout de 4 columnas con etiquetas
+    const nomPart = formattedData.nombres;
+    const apPart = formattedData.apellido_paterno;
+    const amPart = formattedData.apellido_materno;
+
+    // --- Fila 2 (Nombres y Apellidos) ---
+    // Columna 1 (Etiqueta)
+    ctx.font = `bold 12px ${FONT_FAMILY}`;
+    ctx.fillText("Nombre:", x + PADDING, y + 55); 
+    // Columna 2 (Valor Nombre)
     ctx.font = `14px ${FONT_FAMILY}`;
-    ctx.fillText(`DNI: ${formattedData.dni}`, x + TREE_NODE_WIDTH / 2, y + 85);
+    ctx.fillText(nomPart.substring(0, 10) + (nomPart.length > 10 ? '...' : ''), x + PADDING + QUARTER_WIDTH, y + 55); 
     
+    // Columna 3 (Etiqueta)
+    ctx.font = `bold 12px ${FONT_FAMILY}`;
+    ctx.fillText("Apellidos:", x + HALF_WIDTH + PADDING, y + 55); 
+    // Columna 4 (Valor Apellidos - Combinamos P + M)
+    ctx.font = `14px ${FONT_FAMILY}`;
+    let apellidosDisplay = `${apPart.substring(0, 7)}...${amPart.substring(0, 7)}...`;
+    if (apPart.length <= 7 && amPart.length <= 7) {
+        apellidosDisplay = `${apPart} ${amPart}`;
+    }
+    ctx.fillText(apellidosDisplay, x + HALF_WIDTH + PADDING + QUARTER_WIDTH, y + 55); 
+
+    // --- Fila 3 (DNI y Tipo) ---
+    // Columna 1 (Etiqueta DNI)
+    ctx.font = `bold 12px ${FONT_FAMILY}`;
+    ctx.fillText("DNI:", x + PADDING, y + 80); 
+    // Columna 2 (Valor DNI)
+    ctx.font = `14px ${FONT_FAMILY}`;
+    ctx.fillText(formattedData.dni, x + PADDING + QUARTER_WIDTH, y + 80); 
+    
+    // Columna 3 (Etiqueta Tipo - para diferenciar dentro de la categoría)
+    ctx.font = `bold 12px ${FONT_FAMILY}`;
+    ctx.fillText("Relación:", x + HALF_WIDTH + PADDING, y + 80); 
+    // Columna 4 (Valor Tipo)
+    ctx.font = `14px ${FONT_FAMILY}`;
+    const parentescoShort = parentescoText.split(' ')[0]; // Solo la primera palabra
+    ctx.fillText(parentescoShort.substring(0, 10), x + HALF_WIDTH + PADDING + QUARTER_WIDTH, y + 80);
+
     // Retorna el centro del nodo para las conexiones
     return {
         centerX: x + TREE_NODE_WIDTH / 2,
@@ -630,6 +665,39 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
         previousLayerNodes = currentLayerNodesCenters;
         currentY += TREE_NODE_HEIGHT;
     });
+    
+    // --- 4. ESPECIFICACIÓN DE COLORES (LEYENDA) ---
+    const legendData = [
+        { color: '#00B8D4', text: 'PRINCIPAL (DNI consultado)' },
+        { color: '#FFAB00', text: 'PADRES / MADRES' },
+        { color: '#64DD17', text: 'HERMANOS / HERMANAS' },
+        { color: '#3F51B5', text: 'HIJOS / HIJAS (Descendientes directos)' },
+        { color: '#7B1FA2', text: 'TÍOS / SOBRINOS / PRIMOS' },
+        { color: '#9E9E9E', text: 'OTROS FAMILIARES / CUÑADOS' }
+    ];
+    
+    const legendX = MARGIN;
+    let legendY = FINAL_CANVAS_HEIGHT - FOOTER_HEIGHT - 100; // Posición de inicio de la leyenda
+    const LEGEND_BOX_SIZE = 18;
+    const LEGEND_LINE_HEIGHT = 25;
+
+    ctx.fillStyle = COLOR_TITLE;
+    ctx.font = `bold 16px ${FONT_FAMILY}`;
+    ctx.textAlign = 'left';
+    ctx.fillText("Leyenda de Parentesco:", legendX, legendY);
+    legendY += 10;
+    
+    ctx.font = `14px ${FONT_FAMILY}`;
+    legendData.forEach(item => {
+        legendY += LEGEND_LINE_HEIGHT;
+        // Dibujar el cuadro de color
+        ctx.fillStyle = item.color;
+        ctx.fillRect(legendX, legendY - LEGEND_BOX_SIZE / 2, LEGEND_BOX_SIZE, LEGEND_BOX_SIZE);
+        
+        // Dibujar el texto
+        ctx.fillStyle = COLOR_TEXT;
+        ctx.fillText(item.text, legendX + LEGEND_BOX_SIZE + 10, legendY + 5);
+    });
 
     // Pie de Página
     const footerY = FINAL_CANVAS_HEIGHT - FOOTER_HEIGHT + 20;
@@ -753,7 +821,7 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
     const infoCol4Width = INNER_WIDTH / 2 - infoCol3Width;
 
     // Campos que tienen más probabilidades de requerir ajuste de texto y estiramiento de fila
-    const wrapFieldsIndices = [0, 1, 2, 3]; // TODOS LOS CAMPOS DE INFO PODRÍAN SER LARGOS
+    const wrapFieldsIndices = [1, 2, 3]; // Índice de las filas con texto largo: Oficina, Departamento, Distrito
 
     rawInfoData.forEach((row, rowIndex) => {
         let rowHeight = MIN_ROW_HEIGHT;
@@ -767,9 +835,9 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
         let wrappedCol4 = { lines: [String(row[3]).toUpperCase()], height: LINE_HEIGHT }; // Inicializado con altura de 1 línea
 
         if (shouldWrap) {
-            // Columna 2: Valor 1
+            // Columna 2: Oficina de Registro, Departamento, Distrito
             wrappedCol2 = wrapText(ctx, String(row[1]).toUpperCase(), infoCol2Width - 2 * CELL_PADDING, LINE_HEIGHT);
-            // Columna 4: Valor 2
+            // Columna 4: Nro. de Acta, Provincia, Régimen Patrimonial
             wrappedCol4 = wrapText(ctx, String(row[3]).toUpperCase(), infoCol4Width - 2 * CELL_PADDING, LINE_HEIGHT);
             
             // La altura de la fila es determinada por el texto más largo + un padding de celda.
@@ -907,8 +975,9 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
             rowHeight = Math.max(ROW_HEIGHT, wrappedContent.height + 2 * (CELL_PADDING - 5)); 
         } else {
             // Filas de estado civil, no deberían necesitar salto de línea, usamos altura mínima
+            rowHeight = ROW_HEIGHT;
             wrappedContent = wrapText(ctx, contentText, contentWidth, LINE_HEIGHT);
-            rowHeight = Math.max(ROW_HEIGHT, wrappedContent.height + 2 * (CELL_PADDING - 5));
+             // wrappedContent = { lines: [contentText], height: LINE_HEIGHT }; 
         }
 
         // 2. Dibujar Fondos y Bordes
@@ -924,7 +993,6 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
         
         // 3. Dibujar Texto
         const textYCenterOffset = 5; // Offset base para centrado vertical
-        // Ajustar el bloque de texto centrado en Y
         const blockYStart = startY + (rowHeight / 2) - (wrappedContent.height / 2);
 
         // Columna 1 (Etiqueta de Rol)
