@@ -266,6 +266,28 @@ const TREE_NODE_HEIGHT = 100;
 const VERTICAL_SPACING = 100; 
 const ROW_TITLE_HEIGHT = 30; // Altura para el título de la capa (ej: "Padres")
 
+// --- NUEVAS CONSTANTES PARA EL ESTILO DE LÍNEA ---
+const CONNECTION_COLOR = '#00B8D4'; // Azul (para cumplir con el requisito de "azul, verde degradado")
+const CONNECTION_THICKNESS = 4; // Grosor de línea de 4px
+
+// --- NUEVA FUNCIÓN AUXILIAR PARA DIBUJAR LÍNEAS DE CONEXIÓN ---
+/**
+ * Dibuja una línea de conexión con el color y grosor especificados por el usuario.
+ * @param {CanvasRenderingContext2D} ctx - Contexto del canvas.
+ * @param {number} x1 - Coordenada X inicial.
+ * @param {number} y1 - Coordenada Y inicial.
+ * @param {number} x2 - Coordenada X final.
+ * @param {number} y2 - Coordenada Y final.
+ */
+const drawConnectingLine = (ctx, x1, y1, x2, y2) => {
+    ctx.strokeStyle = CONNECTION_COLOR;
+    ctx.lineWidth = CONNECTION_THICKNESS;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+};
+
 
 /**
  * Obtiene el color de fondo de la caja basado en el parentesco (imitando el diseño de la imagen).
@@ -553,15 +575,16 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
         }
         
         // 4.3. Conexiones entre capas (Solo para relaciones Padre/Hijo)
-        ctx.strokeStyle = '#795548'; // Marrón oscuro para las líneas de conexión
-        ctx.lineWidth = lineThickness;
+        // MODIFICADO: Uso de la nueva función drawConnectingLine con el estilo del usuario.
+        // ctx.strokeStyle = '#795548'; // Marrón oscuro para las líneas de conexión (Original)
+        // ctx.lineWidth = lineThickness; (Original)
         
         if (layerIndex > 0) {
             const previousLayerName = layers[layerIndex - 1].name;
             const currentLayerName = layer.name;
             
             // Puntos de inicio y fin para la conexión vertical
-            const previousLayerBottomY = previousLayerNodesCenters[0].bottomY; // Altura del nodo de la fila anterior (solo para un punto de inicio)
+            // const previousLayerBottomY = previousLayerNodesCenters[0].bottomY; // Altura del nodo de la fila anterior (solo para un punto de inicio)
             
             // -----------------------------------------------------------
             // --- CONEXIÓN: Padres -> Principal/Hermanos ---
@@ -581,39 +604,29 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
                         
                         // 1. Línea horizontal de unión de Padres
                         if (nodeCenters.padres.length > 1) {
-                            ctx.beginPath();
-                            ctx.moveTo(nodeCenters.padres[0].centerX, parentBranchY);
-                            ctx.lineTo(nodeCenters.padres[nodeCenters.padres.length - 1].centerX, parentBranchY);
-                            ctx.stroke();
+                            drawConnectingLine(ctx, 
+                                nodeCenters.padres[0].centerX, 
+                                parentBranchY, 
+                                nodeCenters.padres[nodeCenters.padres.length - 1].centerX, 
+                                parentBranchY
+                            );
                         }
                         
                         // 2. Conexiones verticales a cada Padre
                         nodeCenters.padres.forEach(p => {
-                            ctx.beginPath();
-                            ctx.moveTo(p.centerX, p.bottomY);
-                            ctx.lineTo(p.centerX, parentBranchY);
-                            ctx.stroke();
+                            drawConnectingLine(ctx, p.centerX, p.bottomY, p.centerX, parentBranchY);
                         });
 
                         // 3. Tronco Principal de Padres a Principal (descendiendo)
-                        ctx.beginPath();
                         const siblingBranchY = nodeCenters.principal.topY - VERTICAL_SPACING / 2;
-                        ctx.moveTo(nodeCenters.principal.centerX, parentBranchY);
-                        ctx.lineTo(nodeCenters.principal.centerX, siblingBranchY);
-                        ctx.stroke();
+                        drawConnectingLine(ctx, nodeCenters.principal.centerX, parentBranchY, nodeCenters.principal.centerX, siblingBranchY);
                         
                         // 4. Conexión de Hermanos (Línea horizontal que cruza a la mitad de la zona de espaciado)
-                        ctx.beginPath();
-                        ctx.moveTo(minX, siblingBranchY);
-                        ctx.lineTo(maxX, siblingBranchY);
-                        ctx.stroke();
+                        drawConnectingLine(ctx, minX, siblingBranchY, maxX, siblingBranchY);
                         
                         // 5. Conexiones verticales a cada Principal/Hermano
                         principalNodesForLine.forEach(n => {
-                            ctx.beginPath();
-                            ctx.moveTo(n.centerX, n.topY);
-                            ctx.lineTo(n.centerX, siblingBranchY);
-                            ctx.stroke();
+                            drawConnectingLine(ctx, n.centerX, n.topY, n.centerX, siblingBranchY);
                         });
                     }
                 }
@@ -631,23 +644,19 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
                     const childrenBranchY = nodeCenters.principal.bottomY + VERTICAL_SPACING / 2;
                     
                     // 1. Tronco Principal de Principal (saliendo por abajo)
-                    ctx.beginPath();
-                    ctx.moveTo(nodeCenters.principal.centerX, nodeCenters.principal.bottomY);
-                    ctx.lineTo(nodeCenters.principal.centerX, childrenBranchY);
-                    ctx.stroke();
+                    drawConnectingLine(ctx, 
+                        nodeCenters.principal.centerX, 
+                        nodeCenters.principal.bottomY, 
+                        nodeCenters.principal.centerX, 
+                        childrenBranchY
+                    );
 
                     // 2. Línea horizontal de unión de Hijos/Sobrinos
-                    ctx.beginPath();
-                    ctx.moveTo(minX, childrenBranchY);
-                    ctx.lineTo(maxX, childrenBranchY);
-                    ctx.stroke();
+                    drawConnectingLine(ctx, minX, childrenBranchY, maxX, childrenBranchY);
 
                     // 3. Conexiones verticales a cada Hijo/Sobrino
                     currentLayerNodesCenters.forEach(c => {
-                        ctx.beginPath();
-                        ctx.moveTo(c.centerX, c.topY);
-                        ctx.lineTo(c.centerX, childrenBranchY);
-                        ctx.stroke();
+                        drawConnectingLine(ctx, c.centerX, c.topY, c.centerX, childrenBranchY);
                     });
                 }
             }
