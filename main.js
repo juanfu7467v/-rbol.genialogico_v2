@@ -213,6 +213,7 @@ const consultReniecApi = async (dni) => {
     if (!dni || dni === 'N/A') return null;
 
     try {
+        // La API de RENIEC es un proxy a una API externa, debemos verificar la respuesta esperada.
         const response = await axios.get(`${RENIEC_API_URL}?dni=${dni}`);
         // La estructura esperada es { result: { message: 'found data', result: { ...datos... } } }
         const data = response.data?.result?.result;
@@ -220,15 +221,16 @@ const consultReniecApi = async (dni) => {
         if (data && response.data.result?.message === 'found data') {
             return {
                 dni: data.nuDni || dni,
-                nombres: data.preNombres || '',
-                apellido_paterno: data.apePaterno || '',
-                apellido_materno: data.apeMaterno || '',
+                nombres: (data.preNombres || '').toUpperCase().trim(),
+                apellido_paterno: (data.apePaterno || '').toUpperCase().trim(),
+                apellido_materno: (data.apeMaterno || '').toUpperCase().trim(),
                 firma: data.firma || null, // Base64 de la firma
                 // Añadir otros campos relevantes si se necesitan
             };
         }
         return null;
     } catch (error) {
+        // Esto captura errores 404/500 de la API de RENIEC o problemas de red
         console.warn(`Error al consultar RENIEC API para DNI ${dni}:`, error.message);
         return null;
     }
@@ -308,7 +310,7 @@ const generateMarriageCertificateImage = async (rawDocumento, principalData, mat
     const API_SUBTITLE = "MATRIMONIO";
     const BRAND_NAME = "Consulta pe apk"; 
     const CANVAS_WIDTH = 900; 
-    const CANVAS_HEIGHT = 1200; // Aumentamos la altura para acomodar las firmas
+    const CANVAS_HEIGHT = 1200; // Altura inicial suficiente
     const MARGIN_X = 50;
     const MARGIN_Y = 50;
     const INNER_WIDTH = CANVAS_WIDTH - 2 * MARGIN_X;
@@ -471,6 +473,7 @@ const generateMarriageCertificateImage = async (rawDocumento, principalData, mat
     const conyuge1 = principalData; // Ya están enriquecidos
     const conyuge2 = conyuge2Data; // Ya están enriquecidos
     
+    // NOTA CLAVE: Aquí se usa el nombre enriquecido:
     const conyugeRowsData = [
         ["Cónyuge Principal (1)", `${conyuge1.nombres} ${conyuge1.apellido_paterno} ${conyuge1.apellido_materno} (DNI: ${conyuge1.dni})`],
         ["Cónyuge Pareja (2)", `${conyuge2.nombres} ${conyuge2.apellido_paterno} ${conyuge2.apellido_materno} (DNI: ${conyuge2.dni})`],
@@ -578,6 +581,7 @@ const generateMarriageCertificateImage = async (rawDocumento, principalData, mat
     const FIRMA_HEIGHT = 80; 
     const firmaY = currentY;
 
+    // NOTA CLAVE: Aquí se usan las firmas de ambos cónyuges:
     // --- DIBUJO DE LA FIRMA 1 (Cónyuge Principal) ---
     const firma1X = CANVAS_WIDTH / 4;
     await drawSignature(ctx, conyuge1.firma, firma1X - FIRMA_WIDTH / 2, firmaY, FIRMA_WIDTH, FIRMA_HEIGHT, conyuge1.nombres);
@@ -724,11 +728,12 @@ app.get("/consultar-matrimonio", async (req, res) => {
             console.warn(`Advertencia: No se pudo obtener información de RENIEC para el DNI principal: ${rawDocumento}.`);
         }
         
+        // Priorizar datos de RENIEC, sino usar los de Matrimonio, sino 'N/A'
         principalEnriched = {
             dni: rawDocumento,
-            nombres: principalReniec?.nombres || matrimonioDataRaw.nombres || 'N/A', 
-            apellido_paterno: principalReniec?.apellido_paterno || matrimonioDataRaw.apellido_paterno || 'N/A',
-            apellido_materno: principalReniec?.apellido_materno || matrimonioDataRaw.apellido_materno || 'N/A',
+            nombres: principalReniec?.nombres || (matrimonioDataRaw.nombres || '').toUpperCase().trim() || 'N/A', 
+            apellido_paterno: principalReniec?.apellido_paterno || (matrimonioDataRaw.apellido_paterno || '').toUpperCase().trim() || 'N/A',
+            apellido_materno: principalReniec?.apellido_materno || (matrimonioDataRaw.apellido_materno || '').toUpperCase().trim() || 'N/A',
             firma: principalReniec?.firma || null,
         };
 
@@ -739,12 +744,12 @@ app.get("/consultar-matrimonio", async (req, res) => {
             console.warn(`Advertencia: No se pudo obtener información de RENIEC para el cónyuge 2: ${dniConyuge2}.`);
         }
         
+        // Priorizar datos de RENIEC, sino usar los de Matrimonio, sino 'N/A'
         conyuge2Enriched = {
             dni: dniConyuge2,
-            // Usamos RENIEC si está disponible, sino los datos brutos de matrimonio, sino N/A
-            nombres: conyuge2Reniec?.nombres || matrimonioDataRaw.nombres_conyuge || 'N/A',
-            apellido_paterno: conyuge2Reniec?.apellido_paterno || matrimonioDataRaw.apellido_paterno_conyuge || 'N/A',
-            apellido_materno: conyuge2Reniec?.apellido_materno || matrimonioDataRaw.apellido_materno_conyuge || 'N/A',
+            nombres: conyuge2Reniec?.nombres || (matrimonioDataRaw.nombres_conyuge || '').toUpperCase().trim() || 'N/A',
+            apellido_paterno: conyuge2Reniec?.apellido_paterno || (matrimonioDataRaw.apellido_paterno_conyuge || '').toUpperCase().trim() || 'N/A',
+            apellido_materno: conyuge2Reniec?.apellido_materno || (matrimonioDataRaw.apellido_materno_conyuge || '').toUpperCase().trim() || 'N/A',
             firma: conyuge2Reniec?.firma || null,
         };
         
