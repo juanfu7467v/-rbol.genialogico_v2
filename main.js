@@ -251,7 +251,7 @@ const getFormattedPersonData = (data) => {
 
 
 // ==============================================================================
-//  FUNCIONES DE DIBUJO (ÁRBOL GENEALÓGICO) - MODIFICADAS
+//  FUNCIONES DE DIBUJO (ÁRBOL GENEALÓGICO) - MODIFICADAS PARA ALTURA DINÁMICA
 // ==============================================================================
 
 // Constantes de diseño para el árbol - Ajustadas para 3 columnas
@@ -406,7 +406,8 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
     
     const API_NAME = "ARBOL GENEALOGICO";
     const HEADER_HEIGHT = 100;
-    const FOOTER_HEIGHT = 200; // Espacio para la Leyenda y Pie de página
+    // const FOOTER_HEIGHT = 200; // ELIMINADO: Se calculará dinámicamente
+    const LEGEND_LINE_HEIGHT = 25; // Altura de cada línea de la leyenda
 
     // --- 1. PROCESAMIENTO Y AGRUPAMIENTO DE NODOS (Ordenado por Parentesco) ---
     
@@ -449,43 +450,18 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
         { name: 'OTROS Y CUÑADOS', nodes: [...nodes.cunyados, ...nodes.otros] },
     ].filter(layer => layer.nodes.length > 0); 
 
-    // --- 2. CÁLCULO DINÁMICO DEL ALTO DEL CANVAS ---
-    let totalDrawingHeight = 0;
-    const lineThickness = 3;
-
-    // Calcular el alto total
-    layers.forEach(layer => {
-        // Número de filas que requiere esta capa (redondeo hacia arriba)
-        const numLayerRows = Math.ceil(layer.nodes.length / MAX_COLUMNS); 
-        
-        // Altura de los nodos en la capa
-        const layerNodesHeight = numLayerRows * TREE_NODE_HEIGHT;
-        
-        // Espacio entre filas de nodos (si hay más de una fila)
-        const intraLayerSpacing = (numLayerRows - 1) * VERTICAL_SPACING / 2;
-        
-        // Altura de la capa: Título + Nodos + Espaciado de filas internas
-        const layerHeight = ROW_TITLE_HEIGHT + layerNodesHeight + intraLayerSpacing; 
-        
-        // Añadir la altura de la capa y el espaciado entre capas
-        totalDrawingHeight += layerHeight;
-        
-        // Agregar el espacio vertical entre capas
-        totalDrawingHeight += VERTICAL_SPACING; 
-    });
+    // --- 2. CÁLCULO PRELIMINAR DEL ALTO DEL CANVAS (Solo para dibujar, no el final) ---
+    // Usaremos un canvas grande para dibujar y luego recortaremos al tamaño exacto.
+    const TEMP_MAX_HEIGHT = 5000; 
     
-    // Altura total del Canvas: Margen Superior + Título + Línea + Alto de Dibujo + Margen Inferior/Leyenda
-    const FINAL_CANVAS_HEIGHT = MARGIN * 2 + HEADER_HEIGHT + totalDrawingHeight + FOOTER_HEIGHT;
-
-    // --- 3. GENERACIÓN DEL CANVAS ---
-    const canvas = createCanvas(CANVAS_WIDTH_ARBOL, FINAL_CANVAS_HEIGHT);
+    const canvas = createCanvas(CANVAS_WIDTH_ARBOL, TEMP_MAX_HEIGHT);
     const ctx = canvas.getContext("2d");
 
     // Fondo Blanco Puro
     ctx.fillStyle = BACKGROUND_COLOR; 
-    ctx.fillRect(0, 0, CANVAS_WIDTH_ARBOL, FINAL_CANVAS_HEIGHT);
+    ctx.fillRect(0, 0, CANVAS_WIDTH_ARBOL, TEMP_MAX_HEIGHT);
     
-    // Título
+    // 3. Título
     const titleY = MARGIN + 25;
     ctx.fillStyle = COLOR_TITLE;
     ctx.font = `bold 30px ${FONT_FAMILY}`;
@@ -502,7 +478,7 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
     ctx.lineTo(CANVAS_WIDTH_ARBOL - MARGIN, titleY + 50);
     ctx.stroke();
     
-    let currentY = MARGIN + HEADER_HEIGHT;
+    let currentY = MARGIN + HEADER_HEIGHT; // Posición Y donde empieza el dibujo de la primera capa
     
     const nodeCenters = {
         principal: null,
@@ -517,6 +493,7 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
     };
     
     let previousLayerNodesCenters = [];
+    const lineThickness = 3;
 
     // --- 4. DIBUJO DE NODOS POR CAPA (DE ARRIBA A ABAJO) ---
     layers.forEach((layer, layerIndex) => {
@@ -700,7 +677,7 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
     });
     
     // --- 5. ESPECIFICACIÓN DE COLORES (LEYENDA) ---
-    currentY += VERTICAL_SPACING / 2; // Espacio final antes de la leyenda
+    currentY += VERTICAL_SPACING / 2; // Espacio final después del último nodo
     
     // MODIFICACIÓN: Leyenda con los nuevos colores y separando Hijos y Sobrinos
     const legendData = [
@@ -716,8 +693,7 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
     const legendX = MARGIN;
     let legendY = currentY + 10; 
     const LEGEND_BOX_SIZE = 18;
-    const LEGEND_LINE_HEIGHT = 25;
-
+    
     ctx.fillStyle = COLOR_TITLE;
     ctx.font = `bold 18px ${FONT_FAMILY}`;
     ctx.textAlign = 'left';
@@ -728,6 +704,7 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
     
     // Distribución de la leyenda en 2 columnas
     const LEGEND_COL_WIDTH = CANVAS_WIDTH_ARBOL / 2 - MARGIN;
+    const LEGEND_ROWS = Math.ceil(legendData.length / 2);
     
     legendData.forEach((item, index) => {
         const col = index % 2;
@@ -749,16 +726,35 @@ const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) =
         ctx.fillText(item.text, itemX + LEGEND_BOX_SIZE + 10, itemY + 5);
     });
 
-    // Pie de Página
-    const footerY = FINAL_CANVAS_HEIGHT - MARGIN / 2;
+    // Mover currentY al final de la leyenda
+    currentY = legendY + (LEGEND_ROWS + 1) * LEGEND_LINE_HEIGHT;
+    
+    // 6. Pie de Página
+    const FOOTER_LINE_HEIGHT = 20;
+    const footerY = currentY + FOOTER_LINE_HEIGHT; // Espacio de 20px después de la leyenda
+
     ctx.fillStyle = COLOR_SECONDARY_TEXT;
     ctx.font = `14px ${FONT_FAMILY}`;
     ctx.textAlign = 'left';
     ctx.fillText(`Fuente: ${API_NAME}`, MARGIN, footerY);
     ctx.textAlign = 'right';
     ctx.fillText(`Generado el: ${new Date().toLocaleDateString('es-ES')}`, CANVAS_WIDTH_ARBOL - MARGIN, footerY);
+    
+    // Mover currentY al final del pie de página más un margen final
+    currentY = footerY + MARGIN / 2; 
 
-    return canvas.toBuffer('image/png');
+    // --- 7. AJUSTE FINAL DEL CANVAS ---
+    // La nueva altura final del canvas es la posición Y actual.
+    const FINAL_CANVAS_HEIGHT = currentY; 
+    
+    // Crear un nuevo canvas con la altura ajustada y copiar la imagen (esto recorta el exceso)
+    const finalCanvas = createCanvas(CANVAS_WIDTH_ARBOL, FINAL_CANVAS_HEIGHT);
+    const finalCtx = finalCanvas.getContext("2d");
+    
+    // Copiar el contenido dibujado del canvas temporal al final
+    finalCtx.drawImage(canvas, 0, 0, CANVAS_WIDTH_ARBOL, FINAL_CANVAS_HEIGHT, 0, 0, CANVAS_WIDTH_ARBOL, FINAL_CANVAS_HEIGHT);
+    
+    return finalCanvas.toBuffer('image/png');
 };
 
 /**
