@@ -5,7 +5,8 @@ const { v4: uuidv4 } = require("uuid");
 const cors = require('cors'); 
 const { Buffer } = require('buffer'); 
 const path = require('path'); 
-const crypto = require('crypto'); 
+const crypto = require('crypto');
+const PDFDocument = require('pdfkit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -92,7 +93,7 @@ const generateColorFromDni = (dni) => {
 /**
  * Función simplificada para la subida a GitHub.
  */
-const uploadToGitHub = async (fileName, imageBuffer, messagePrefix) => {
+const uploadToGitHub = async (fileName, fileBuffer, messagePrefix, fileType = 'png') => {
     if (!GITHUB_TOKEN || !GITHUB_REPO) {
         throw new Error("Error de configuración: GITHUB_TOKEN o GITHUB_REPO no están definidos.");
     }
@@ -103,7 +104,7 @@ const uploadToGitHub = async (fileName, imageBuffer, messagePrefix) => {
     }
 
     const filePath = `public/${fileName}`; 
-    const contentBase64 = imageBuffer.toString('base64');
+    const contentBase64 = fileBuffer.toString('base64');
 
     const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
     // Construir la URL RAW de GitHub que se usará para la descarga
@@ -142,10 +143,10 @@ const uploadToGitHub = async (fileName, imageBuffer, messagePrefix) => {
 };
 
 /**
- * NUEVO: Comprueba si ya existe una imagen para el DNI y tipo de API.
+ * NUEVO: Comprueba si ya existe un archivo para el DNI y tipo de API.
  * Retorna la URL raw si existe, o null si no.
  */
-const checkIfImageExists = async (dni, apiType) => {
+const checkIfFileExists = async (dni, apiType, fileExtension = 'pdf') => {
     if (!GITHUB_TOKEN || !GITHUB_REPO) {
         console.warn("ADVERTENCIA: GITHUB_TOKEN o GITHUB_REPO no están definidos para la verificación.");
         return null;
@@ -155,7 +156,7 @@ const checkIfImageExists = async (dni, apiType) => {
     if (!owner || !repo) return null;
     
     // Nombre del archivo a buscar sin UUID
-    const targetFileName = `${dni}_${apiType}.png`.toLowerCase();
+    const targetFileName = `${dni}_${apiType}.${fileExtension}`.toLowerCase();
     const filePathPrefix = `public/`;
 
     const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePathPrefix}`;
@@ -176,7 +177,7 @@ const checkIfImageExists = async (dni, apiType) => {
         const existingFile = files.find(file => file.type === 'file' && file.name.toLowerCase() === targetFileName);
 
         if (existingFile) {
-            console.log(`✅ Imagen existente encontrada para DNI: ${dni} (${apiType}).`);
+            console.log(`✅ Archivo existente encontrado para DNI: ${dni} (${apiType}).`);
             // Devolver la URL raw para la descarga
             return `https://raw.githubusercontent.com/${owner}/${repo}/${GITHUB_BRANCH}/${filePathPrefix}${existingFile.name}`;
         }
@@ -186,24 +187,24 @@ const checkIfImageExists = async (dni, apiType) => {
     } catch (error) {
         // 404 significa que la carpeta 'public' no existe o que no hay contenido, lo cual es normal.
         if (error.response?.status !== 404) {
-             console.error(`Error al verificar existencia de imagen en GitHub (status ${error.response?.status}):`, error.message);
+             console.error(`Error al verificar existencia de archivo en GitHub (status ${error.response?.status}):`, error.message);
         }
         return null;
     }
 };
 
 /**
- * NUEVO: Sube la imagen si no existe, o retorna la URL de la imagen existente.
+ * NUEVO: Sube el archivo si no existe, o retorna la URL del archivo existente.
  */
-const uploadOrReturnExisting = async (dni, apiName, imageBuffer) => {
+const uploadOrReturnExisting = async (dni, apiName, fileBuffer, fileType = 'pdf') => {
     const apiTypeKey = API_TYPE_MAP[apiName] || 'DESCONOCIDO';
     const messagePrefix = apiName.includes("MATRIMONIO") ? "feat: Matrimonios" : "feat: Árbol Genealógico";
     
-    // 1. Verificar si la imagen ya existe
-    const existingUrl = await checkIfImageExists(dni, apiTypeKey);
+    // 1. Verificar si el archivo ya existe
+    const existingUrl = await checkIfFileExists(dni, apiTypeKey, fileType);
 
     if (existingUrl) {
-        // La imagen existe, retornamos la URL existente
+        // El archivo existe, retornamos la URL existente
         return { 
             url: existingUrl, 
             status: "existing" 
@@ -211,9 +212,9 @@ const uploadOrReturnExisting = async (dni, apiName, imageBuffer) => {
     }
 
     // 2. Si no existe, generamos el nombre de archivo definitivo (sin UUID) y subimos
-    const fileName = `${dni}_${apiTypeKey}.png`.toLowerCase();
-    console.log(`⬆️ Subiendo nueva imagen: ${fileName}`);
-    const newUrl = await uploadToGitHub(fileName, imageBuffer, messagePrefix);
+    const fileName = `${dni}_${apiTypeKey}.${fileType}`.toLowerCase();
+    console.log(`⬆️ Subiendo nuevo archivo: ${fileName}`);
+    const newUrl = await uploadToGitHub(fileName, fileBuffer, messagePrefix, fileType);
     
     return { 
         url: newUrl, 
@@ -249,570 +250,287 @@ const getFormattedPersonData = (data) => {
     };
 };
 
-
-// ==============================================================================
-//  FUNCIONES DE DIBUJO (ÁRBOL GENEALÓGICO) - MODIFICADAS
-// ==============================================================================
-
-// Constantes de diseño para el árbol - Ajustadas para 3 columnas
-const CANVAS_WIDTH_ARBOL = 900; // Ancho fijo para 3 columnas cómodas
-const MAX_COLUMNS = 3;
-const MARGIN_X = 50;
-const INNER_WIDTH = CANVAS_WIDTH_ARBOL - 2 * MARGIN_X;
-// Calcular el ancho del nodo para que quepan 3
-const HORIZONTAL_SPACING = 30; 
-const TREE_NODE_WIDTH = (INNER_WIDTH - (MAX_COLUMNS - 1) * HORIZONTAL_SPACING) / MAX_COLUMNS; 
-const TREE_NODE_HEIGHT = 120; // Aumentamos la altura para acomodar 4 líneas de texto
-const VERTICAL_SPACING = 100; 
-const ROW_TITLE_HEIGHT = 30; // Altura para el título de la capa (ej: "Padres")
-
-
-/**
- * Obtiene el color de fondo de la caja basado en el parentesco (imitando el diseño de la imagen).
- */
-const getBoxColorByParentesco = (parentescoText, isPrincipal) => {
-    if (isPrincipal) {
-        return '#00B8D4'; // Cyan - PRINCIPAL
-    } 
-    
-    parentescoText = (parentescoText || '').toUpperCase();
-    
-    // Padres y Madres: Ámbar
-    if (parentescoText.includes('PADRE') || parentescoText.includes('MADRE')) {
-        return '#FFAB00'; // Ámbar - PADRES 
-    } 
-    // Hermanos y Hermanas: Verde Lima
-    else if (parentescoText.includes('HERMANO') || parentescoText.includes('HERMANA')) {
-        return '#64DD17'; // Verde Lima - HERMANOS
-    } 
-    // Descendientes (Hijos, Hijas): Azul Oscuro
-    else if (parentescoText.includes('HIJO') || parentescoText.includes('HIJA')) {
-        // MODIFICACIÓN: Color diferente para Hijos y Sobrinos para diferenciarlos.
-        return '#3F51B5'; // Azul Oscuro - HIJOS
-    } 
-    // Sobrinos: Púrpura (diferente al de Hijos)
-    else if (parentescoText.includes('SOBRINO') || parentescoText.includes('SOBRINA')) {
-        return '#7B1FA2'; // Púrpura Oscuro - SOBRINOS
-    } 
-    // Tíos/Primos: Rojo Ladrillo (diferente al de Sobrinos)
-    else if (parentescoText.includes('TIO') || parentescoText.includes('TIA') || parentescoText.includes('PRIMO') || parentescoText.includes('PRIMA')) {
-         return '#D32F2F'; // Rojo Ladrillo - Tíos/Primos
-    }
-    // Otros: Gris
-    else {
-        return '#9E9E9E'; // Gris - OTROS
-    }
-};
-
-
-/**
- * Dibuja un nodo (caja) en el Árbol Genealógico, imitando el estilo de la imagen subida.
- */
-const drawTreeNode = (ctx, data, x, y, isPrincipal, parentesco) => {
-    
-    // 1. Determinar Colores y Texto
-    const parentescoText = (isPrincipal ? 'PRINCIPAL' : (parentesco || 'FAMILIAR')).toUpperCase().replace('N/A', 'FAMILIAR');
-    const boxColor = getBoxColorByParentesco(parentesco, isPrincipal); // Color para el BORDE
-    
-    // MODIFICACIÓN CLAVE: Fondo BLANCO y Texto NEGRO
-    const backgroundColor = BACKGROUND_COLOR; // Fondo Blanco
-    const textColor = COLOR_TEXT; // Texto Negro
-
-    // 2. Dibuja la Caja de Fondo (Rectángulo plano)
-    ctx.fillStyle = backgroundColor;
-    ctx.fillRect(x, y, TREE_NODE_WIDTH, TREE_NODE_HEIGHT);
-    
-    // 3. Dibuja el Borde (con el color de parentesco)
-    ctx.strokeStyle = boxColor;
-    ctx.lineWidth = 4; // Un borde más grueso para que destaque
-    ctx.strokeRect(x, y, TREE_NODE_WIDTH, TREE_NODE_HEIGHT);
-    
-    // 4. Dibujar Texto (Simulando la estructura interna de la caja)
-    const formattedData = getFormattedPersonData(data);
-    
-    ctx.fillStyle = textColor;
-    ctx.textAlign = 'left';
-    
-    // --- Fila 1: Parentesco (Título Principal) ---
-    ctx.font = `bold 16px ${FONT_FAMILY}`; // Tamaño ajustado
-    ctx.textAlign = 'center'; // Centrado en la caja
-    ctx.fillText(parentescoText, x + TREE_NODE_WIDTH / 2, y + 20); // Y más arriba para dejar espacio
-    
-    // Línea separadora sutil (Gris oscuro)
-    ctx.strokeStyle = '#CCCCCC'; 
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x + 5, y + 28);
-    ctx.lineTo(x + TREE_NODE_WIDTH - 5, y + 28);
-    ctx.stroke();
-    
-    ctx.textAlign = 'left'; // Reset a la izquierda para los datos
-    const PADDING = 10;
-    const LABEL_WIDTH = 70; // Ancho para las etiquetas
-    const VALUE_WIDTH = TREE_NODE_WIDTH - LABEL_WIDTH - 2 * PADDING;
-    let textY = y + 45; // Comienzo de los datos
-    
-    // ----------------------------------------------------------------------------------
-    // MODIFICACIÓN DE ORDEN: Nombre, Apellidos, DNI, Tipo
-    // ----------------------------------------------------------------------------------
-    
-    // Helper para dibujar una fila de etiqueta-valor
-    const drawLine = (label, value) => {
-        // Etiqueta (bold, gris)
-        ctx.font = `bold 12px ${FONT_FAMILY}`;
-        ctx.fillStyle = COLOR_SECONDARY_TEXT; 
-        ctx.fillText(label, x + PADDING, textY); 
-        
-        // Valor (normal, negro)
-        ctx.font = `14px ${FONT_FAMILY}`;
-        ctx.fillStyle = textColor; 
-        // Usamos una versión recortada si es muy larga
-        let displayValue = value.length > 25 ? value.substring(0, 22) + '...' : value; 
-        ctx.fillText(displayValue, x + PADDING + LABEL_WIDTH, textY, VALUE_WIDTH); 
-        
-        textY += 20; // Incremento de línea
-    };
-    
-    // Fila 2: Nombre
-    drawLine("Nombre:", formattedData.nombres);
-
-    // Fila 3: Apellidos
-    drawLine("Apellidos:", `${formattedData.apellido_paterno} ${formattedData.apellido_materno}`);
-    
-    // Fila 4: DNI
-    drawLine("DNI:", formattedData.dni);
-    
-    // Fila 5: Tipo (M/P) - Solo para ilustración. El parentesco es más relevante.
-    const tipo = (parentesco || '').toUpperCase().includes('PADRE') || (parentesco || '').toUpperCase().includes('HERMANO') || (parentesco || '').toUpperCase().includes('TIO') || (parentesco || '').toUpperCase().includes('HIJO') || (parentesco || '').toUpperCase().includes('SOBRINO') || (parentesco || '').toUpperCase().includes('PRIMO') ? 'Paterno' : 
-                 (parentesco || '').toUpperCase().includes('MADRE') || (parentesco || '').toUpperCase().includes('HERMANA') || (parentesco || '').toUpperCase().includes('TIA') || (parentesco || '').toUpperCase().includes('HIJA') || (parentesco || '').toUpperCase().includes('SOBRINA') || (parentesco || '').toUpperCase().includes('PRIMA') ? 'Materno' : 'N/A';
-    
-    drawLine("Sexo/Lado:", tipo);
-    // ----------------------------------------------------------------------------------
-
-
-    // Retorna el centro del nodo para las conexiones
-    return {
-        centerX: x + TREE_NODE_WIDTH / 2,
-        centerY: y + TREE_NODE_HEIGHT / 2,
-        bottomY: y + TREE_NODE_HEIGHT,
-        topY: y,
-    };
-};
-
-/**
- * Genera la imagen del Árbol Genealógico.
- */
-const generateGenealogyTreeImage = async (rawDocumento, principal, familiares) => {
-    
-    const API_NAME = "ARBOL GENEALOGICO";
-    const HEADER_HEIGHT = 100;
-    // ELIMINADA: const FOOTER_HEIGHT = 200; // Espacio para la Leyenda y Pie de página
-
-    // --- 1. PROCESAMIENTO Y AGRUPAMIENTO DE NODOS (Ordenado por Parentesco) ---
-    
-    // Aseguramos que la persona principal tenga el tipo de parentesco correcto para su capa
-    const principalNode = { ...principal, tipo: 'PRINCIPAL', parentesco: 'PRINCIPAL' };
-    
-    // Agrupación y Ordenamiento dentro de grupos
-    const nodes = {
-        // Padres: Siempre se ordenan (Padre, Madre) para la conexión
-        padres: familiares.filter(f => f.tipo?.toUpperCase().includes('PADRE') || f.tipo?.toUpperCase().includes('MADRE')).sort((a, b) => {
-            if (a.tipo?.toUpperCase().includes('MADRE') && b.tipo?.toUpperCase().includes('PADRE')) return 1;
-            if (a.tipo?.toUpperCase().includes('PADRE') && b.tipo?.toUpperCase().includes('MADRE')) return -1;
-            return 0;
-        }), 
-        // Hermanos: Se incluyen en la misma capa que el principal
-        hermanos: familiares.filter(f => f.tipo?.toUpperCase().includes('HERMANO') || f.tipo?.toUpperCase().includes('HERMANA')).sort((a, b) => a.tipo?.toUpperCase().includes('HERMANA') ? 1 : -1),
-        // Hijos
-        hijos: familiares.filter(f => f.tipo?.toUpperCase().includes('HIJO') || f.tipo?.toUpperCase().includes('HIJA')).sort((a, b) => a.tipo?.toUpperCase().includes('HIJA') ? 1 : -1),
-        // Tíos
-        tios: familiares.filter(f => f.tipo?.toUpperCase().includes('TIO') || f.tipo?.toUpperCase().includes('TIA')).sort((a, b) => a.tipo?.toUpperCase().includes('TIA') ? 1 : -1),
-        // Sobrinos
-        sobrinos: familiares.filter(f => f.tipo?.toUpperCase().includes('SOBRINO') || f.tipo?.toUpperCase().includes('SOBRINA')).sort((a, b) => a.tipo?.toUpperCase().includes('SOBRINA') ? 1 : -1),
-        // Primos
-        primos: familiares.filter(f => f.tipo?.toUpperCase().includes('PRIMO') || f.tipo?.toUpperCase().includes('PRIMA')).sort((a, b) => a.tipo?.toUpperCase().includes('PRIMA') ? 1 : -1),
-        // Cuñados
-        cunyados: familiares.filter(f => f.tipo?.toUpperCase().includes('CUÑADO') || f.tipo?.toUpperCase().includes('CUÑADA')),
-        // Otros
-        otros: familiares.filter(f => !f.tipo?.toUpperCase().includes('PADRE') && !f.tipo?.toUpperCase().includes('MADRE') && !f.tipo?.toUpperCase().includes('HERMANO') && !f.tipo?.toUpperCase().includes('HERMANA') && !f.tipo?.toUpperCase().includes('HIJO') && !f.tipo?.toUpperCase().includes('HIJA') && !f.tipo?.toUpperCase().includes('TIO') && !f.tipo?.toUpperCase().includes('TIA') && !f.tipo?.toUpperCase().includes('SOBRINO') && !f.tipo?.toUpperCase().includes('SOBRINA') && !f.tipo?.toUpperCase().includes('PRIMO') && !f.tipo?.toUpperCase().includes('PRIMA') && !f.tipo?.toUpperCase().includes('CUÑADO') && !f.tipo?.toUpperCase().includes('CUÑADA')),
-    };
-    
-    // Orden de las capas jerárquicas (IMPORTANTE PARA EL FLUJO)
-    let layers = [
-        { name: 'PADRES', nodes: nodes.padres },
-        { name: 'TÍOS', nodes: nodes.tios },
-        // La capa de principal siempre existe, y se filtra para no duplicar al principal si estaba en 'familiares'
-        { name: 'PRINCIPAL Y HERMANOS', nodes: [principalNode, ...nodes.hermanos].filter((v, i, a) => a.findIndex(t => (t.dni === v.dni)) === i) },
-        { name: 'HIJOS', nodes: nodes.hijos },
-        { name: 'SOBRINOS', nodes: nodes.sobrinos },
-        { name: 'PRIMOS', nodes: nodes.primos },
-        { name: 'OTROS Y CUÑADOS', nodes: [...nodes.cunyados, ...nodes.otros] },
-    ].filter(layer => layer.nodes.length > 0); 
-
-    // --- 2. CÁLCULO DINÁMICO DEL ALTO DEL CANVAS ---
-    let totalDrawingHeight = 0;
-    const lineThickness = 3;
-
-    // Calcular el alto total
-    layers.forEach(layer => {
-        // Número de filas que requiere esta capa (redondeo hacia arriba)
-        const numLayerRows = Math.ceil(layer.nodes.length / MAX_COLUMNS); 
-        
-        // Altura de los nodos en la capa
-        const layerNodesHeight = numLayerRows * TREE_NODE_HEIGHT;
-        
-        // Espacio entre filas de nodos (si hay más de una fila)
-        const intraLayerSpacing = (numLayerRows - 1) * VERTICAL_SPACING / 2;
-        
-        // Altura de la capa: Título + Nodos + Espaciado de filas internas
-        const layerHeight = ROW_TITLE_HEIGHT + layerNodesHeight + intraLayerSpacing; 
-        
-        // Añadir la altura de la capa y el espaciado entre capas
-        totalDrawingHeight += layerHeight;
-        
-        // Agregar el espacio vertical entre capas
-        totalDrawingHeight += VERTICAL_SPACING; 
-    });
-    
-    // Altura total del Canvas: Margen Superior + Título + Línea + Alto de Dibujo + Margen Inferior/Leyenda
-    // Calculamos una ALTURA MÁXIMA TENTATIVA para generar el canvas inicialmente.
-    // El alto final se ajustará después de dibujar la leyenda.
-    const TENTATIVE_CANVAS_HEIGHT = MARGIN * 2 + HEADER_HEIGHT + totalDrawingHeight + 300; // 300 es un valor seguro
-    
-    // --- 3. GENERACIÓN DEL CANVAS (Usando el alto tentativo) ---
-    const canvas = createCanvas(CANVAS_WIDTH_ARBOL, TENTATIVE_CANVAS_HEIGHT);
-    const ctx = canvas.getContext("2d");
-
-    // Fondo Blanco Puro
-    ctx.fillStyle = BACKGROUND_COLOR; 
-    ctx.fillRect(0, 0, CANVAS_WIDTH_ARBOL, TENTATIVE_CANVAS_HEIGHT);
-    
-    // Título
-    const titleY = MARGIN + 25;
-    ctx.fillStyle = COLOR_TITLE;
-    ctx.font = `bold 30px ${FONT_FAMILY}`;
-    ctx.textAlign = 'center';
-    ctx.fillText(`ÁRBOL GENEALÓGICO`, CANVAS_WIDTH_ARBOL / 2, titleY);
-    ctx.font = `20px ${FONT_FAMILY}`;
-    ctx.fillText(`DNI: ${rawDocumento} - Total de Familiares: ${familiares.length}`, CANVAS_WIDTH_ARBOL / 2, titleY + 35);
-    
-    // Línea separadora
-    ctx.strokeStyle = '#9E9E9E'; // Gris
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(MARGIN, titleY + 50);
-    ctx.lineTo(CANVAS_WIDTH_ARBOL - MARGIN, titleY + 50);
-    ctx.stroke();
-    
-    let currentY = MARGIN + HEADER_HEIGHT;
-    
-    const nodeCenters = {
-        principal: null,
-        padres: [],
-        tios: [],
-        hermanos: [],
-        hijos: [],
-        sobrinos: [],
-        primos: [],
-        otros: [],
-        cunyados: []
-    };
-    
-    let previousLayerNodesCenters = [];
-
-    // --- 4. DIBUJO DE NODOS POR CAPA (DE ARRIBA A ABAJO) ---
-    layers.forEach((layer, layerIndex) => {
-        
-        // 4.1. Dibujar Título de la Capa
-        currentY += VERTICAL_SPACING / 2; // Espacio vertical entre capas
-        ctx.fillStyle = '#444444';
-        ctx.font = `bold 18px ${FONT_FAMILY}`;
-        ctx.textAlign = 'left';
-        ctx.fillText(`— ${layer.name} —`, MARGIN_X, currentY);
-        currentY += ROW_TITLE_HEIGHT;
-
-        let currentLayerNodesCenters = [];
-        const currentLayerNodes = layer.nodes;
-        
-        // 4.2. Dibujar los Nodos de la Capa (Envolviendo en filas de 3)
-        const numNodes = currentLayerNodes.length;
-        
-        let rowYStart = currentY;
-
-        for (let i = 0; i < numNodes; i++) {
-            const row = Math.floor(i / MAX_COLUMNS);
-            const col = i % MAX_COLUMNS;
-            
-            // La Y inicial de la fila
-            let nodeY = rowYStart + row * (TREE_NODE_HEIGHT + VERTICAL_SPACING / 2);
-            
-            // Calcular el X, siempre centrado
-            const nodesInCurrentRow = Math.min(MAX_COLUMNS, numNodes - row * MAX_COLUMNS);
-            const rowWidth = nodesInCurrentRow * TREE_NODE_WIDTH + (nodesInCurrentRow - 1) * HORIZONTAL_SPACING;
-            const startX = (CANVAS_WIDTH_ARBOL - rowWidth) / 2;
-            
-            let nodeX = startX + col * (TREE_NODE_WIDTH + HORIZONTAL_SPACING);
-            
-            const p = currentLayerNodes[i];
-            const isPrincipal = p.dni === rawDocumento;
-            const parentesco = p.tipo || p.parentesco;
-            const node = drawTreeNode(ctx, p, nodeX, nodeY, isPrincipal, parentesco);
-            currentLayerNodesCenters.push(node);
-            
-            // Asignar al mapa de centros (para la conexión)
-            if (isPrincipal) {
-                nodeCenters.principal = node;
-            } else if (p.tipo?.toUpperCase().includes('PADRE') || p.tipo?.toUpperCase().includes('MADRE')) {
-                nodeCenters.padres.push(node);
-            } else if (p.tipo?.toUpperCase().includes('HERMANO') || p.tipo?.toUpperCase().includes('HERMANA')) {
-                nodeCenters.hermanos.push(node);
-            } else if (p.tipo?.toUpperCase().includes('TIO') || p.tipo?.toUpperCase().includes('TIA')) {
-                nodeCenters.tios.push(node);
-            } else if (p.tipo?.toUpperCase().includes('HIJO') || p.tipo?.toUpperCase().includes('HIJA')) {
-                nodeCenters.hijos.push(node);
-            } else if (p.tipo?.toUpperCase().includes('SOBRINO') || p.tipo?.toUpperCase().includes('SOBRINA')) {
-                nodeCenters.sobrinos.push(node);
-            } else if (p.tipo?.toUpperCase().includes('PRIMO') || p.tipo?.toUpperCase().includes('PRIMA')) {
-                nodeCenters.primos.push(node);
-            } else if (p.tipo?.toUpperCase().includes('CUÑADO') || p.tipo?.toUpperCase().includes('CUÑADA')) {
-                nodeCenters.cunyados.push(node);
-            } else {
-                 nodeCenters.otros.push(node);
-            }
-        }
-        
-        // 4.3. Conexiones entre capas (Solo para relaciones Padre/Hijo)
-        ctx.strokeStyle = '#795548'; // Marrón oscuro para las líneas de conexión
-        ctx.lineWidth = lineThickness;
-        
-        if (layerIndex > 0) {
-            const previousLayerName = layers[layerIndex - 1].name;
-            const currentLayerName = layer.name;
-            
-            // -----------------------------------------------------------
-            // --- CONEXIÓN 1: Padres (Arriba) -> Principal/Hermanos (Abajo) ---
-            // -----------------------------------------------------------
-            if (previousLayerName.includes('PADRES') && currentLayerName.includes('PRINCIPAL')) {
-                if (nodeCenters.padres.length > 0 && nodeCenters.principal) {
-                    const principalNodes = [nodeCenters.principal, ...nodeCenters.hermanos].filter(n => n);
-                    // Usamos todos los nodos de esta capa (Principal y Hermanos) para el cálculo de la línea horizontal
-                    const siblingNodesForLine = principalNodes.length > 0 ? principalNodes : [nodeCenters.principal];
-
-                    if (siblingNodesForLine.length > 0) {
-                        const minX = Math.min(...siblingNodesForLine.map(n => n.centerX));
-                        const maxX = Math.max(...siblingNodesForLine.map(n => n.centerX));
-                        
-                        // Y de la línea horizontal de unión de Padres (a mitad del espacio vertical)
-                        const parentBranchY = previousLayerNodesCenters.map(n => n.bottomY).sort((a, b) => b - a)[0] + VERTICAL_SPACING / 2;
-                        
-                        // 1. Línea horizontal de unión de Padres (si hay más de 1 padre)
-                        if (nodeCenters.padres.length > 1) {
-                            const minParentX = Math.min(...nodeCenters.padres.map(n => n.centerX));
-                            const maxParentX = Math.max(...nodeCenters.padres.map(n => n.centerX));
-                            ctx.beginPath();
-                            ctx.moveTo(minParentX, parentBranchY);
-                            ctx.lineTo(maxParentX, parentBranchY);
-                            ctx.stroke();
-                        } else if (nodeCenters.padres.length === 1) {
-                            // Si solo hay un padre, la línea horizontal de padres es solo el centro del nodo
-                             // Nada que dibujar, el tronco principal se encargará de esto
-                        }
-                        
-                        // 2. Conexiones verticales a cada Padre, conectando el nodo al punto de ramificación
-                        nodeCenters.padres.forEach(p => {
-                            ctx.beginPath();
-                            ctx.moveTo(p.centerX, p.bottomY);
-                            ctx.lineTo(p.centerX, parentBranchY);
-                            ctx.stroke();
-                        });
-
-                        // 3. Tronco Principal de Padres a Principal (descendiendo)
-                        // El tronco debe bajar desde el centro de la línea de Padres hasta la línea de Hermanos
-                        const siblingBranchY = nodeCenters.principal.topY - VERTICAL_SPACING / 2;
-                        const trunkX = nodeCenters.principal.centerX; // Usamos el centro del principal
-                        
-                        ctx.beginPath();
-                        ctx.moveTo(trunkX, parentBranchY);
-                        ctx.lineTo(trunkX, siblingBranchY);
-                        ctx.stroke();
-                        
-                        // 4. Conexión de Hermanos (Línea horizontal que cruza a la mitad de la zona de espaciado)
-                        ctx.beginPath();
-                        ctx.moveTo(minX, siblingBranchY);
-                        ctx.lineTo(maxX, siblingBranchY);
-                        ctx.stroke();
-                        
-                        // 5. Conexiones verticales a cada Principal/Hermano
-                        siblingNodesForLine.forEach(n => {
-                            ctx.beginPath();
-                            ctx.moveTo(n.centerX, n.topY);
-                            ctx.lineTo(n.centerX, siblingBranchY);
-                            ctx.stroke();
-                        });
-                    }
-                }
-            }
-            
-            // -----------------------------------------------------------
-            // --- CONEXIÓN 2: Principal (Arriba) -> Hijos (Abajo) ---
-            // -----------------------------------------------------------
-            
-            if (previousLayerName.includes('PRINCIPAL') && currentLayerName.includes('HIJOS')) {
-                 if (nodeCenters.principal && nodeCenters.hijos.length > 0) {
-                    const minX = Math.min(...nodeCenters.hijos.map(n => n.centerX));
-                    const maxX = Math.max(...nodeCenters.hijos.map(n => n.centerX));
-                    
-                    // Y de la línea horizontal de unión de Hijos
-                    const childrenBranchY = nodeCenters.principal.bottomY + VERTICAL_SPACING / 2;
-                    
-                    // 1. Tronco Principal de Principal (saliendo por abajo)
-                    ctx.beginPath();
-                    ctx.moveTo(nodeCenters.principal.centerX, nodeCenters.principal.bottomY);
-                    ctx.lineTo(nodeCenters.principal.centerX, childrenBranchY);
-                    ctx.stroke();
-
-                    // 2. Línea horizontal de unión de Hijos
-                    ctx.beginPath();
-                    ctx.moveTo(minX, childrenBranchY);
-                    ctx.lineTo(maxX, childrenBranchY);
-                    ctx.stroke();
-
-                    // 3. Conexiones verticales a cada Hijo
-                    nodeCenters.hijos.forEach(c => {
-                        ctx.beginPath();
-                        ctx.moveTo(c.centerX, c.topY);
-                        ctx.lineTo(c.centerX, childrenBranchY);
-                        ctx.stroke();
-                    });
-                }
-            }
-            
-            // Para otras capas (Tíos, Primos, Sobrinos, Otros), NO se dibujan conexiones jerárquicas directas.
-        }
-
-        // Mover Y al final de la última caja de la capa para el siguiente cálculo.
-        // Si no hay nodos, no movemos la Y base de la capa.
-        const layerBottomY = currentLayerNodesCenters.map(n => n.bottomY).sort((a, b) => b - a)[0];
-        if (layerBottomY) {
-            currentY = layerBottomY;
-        } else {
-             currentY += TREE_NODE_HEIGHT; // Caso de capa vacía que se filtró (aunque debería ser rara)
-        }
-        previousLayerNodesCenters = currentLayerNodesCenters;
-    });
-    
-    // --- 5. ESPECIFICACIÓN DE COLORES (LEYENDA) ---
-    currentY += VERTICAL_SPACING / 2; // Espacio final antes de la leyenda (Separación entre el último nodo y la leyenda)
-    
-    // MODIFICACIÓN: Leyenda con los nuevos colores y separando Hijos y Sobrinos
-    const legendData = [
-        { color: '#00B8D4', text: 'PRINCIPAL (DNI consultado)' },
-        { color: '#FFAB00', text: 'PADRES / MADRES' },
-        { color: '#64DD17', text: 'HERMANOS / HERMANAS' },
-        { color: '#D32F2F', text: 'TÍOS / TÍAS / PRIMOS / PRIMAS' }, // Rojo Ladrillo
-        { color: '#3F51B5', text: 'HIJOS / HIJAS' }, // Azul Oscuro
-        { color: '#7B1FA2', text: 'SOBRINOS / SOBRINAS' }, // Púrpura Oscuro
-        { color: '#9E9E9E', text: 'OTROS FAMILIARES / CUÑADOS' }
-    ];
-    
-    const legendX = MARGIN;
-    let legendY = currentY + 10; 
-    const LEGEND_BOX_SIZE = 18;
-    const LEGEND_LINE_HEIGHT = 25;
-
-    ctx.fillStyle = COLOR_TITLE;
-    ctx.font = `bold 18px ${FONT_FAMILY}`;
-    ctx.textAlign = 'left';
-    ctx.fillText("Leyenda de Parentesco:", legendX, legendY);
-    legendY += 10;
-    
-    ctx.font = `14px ${FONT_FAMILY}`;
-    
-    // Distribución de la leyenda en 2 columnas
-    const LEGEND_COL_WIDTH = CANVAS_WIDTH_ARBOL / 2 - MARGIN;
-    let maxLegendY = currentY; // Inicializamos con la Y antes de empezar la leyenda
-    
-    legendData.forEach((item, index) => {
-        const col = index % 2;
-        const row = Math.floor(index / 2);
-        
-        let itemX = legendX + col * LEGEND_COL_WIDTH;
-        // Ajuste para tener 4 filas en total (0, 1, 2, 3)
-        let itemY = legendY + (row + 1) * LEGEND_LINE_HEIGHT; 
-
-        // Dibujar el cuadro de color (Borde de color sobre fondo blanco)
-        ctx.fillStyle = BACKGROUND_COLOR; // Fondo blanco para la caja
-        ctx.fillRect(itemX, itemY - LEGEND_BOX_SIZE / 2, LEGEND_BOX_SIZE, LEGEND_BOX_SIZE);
-        ctx.strokeStyle = item.color;
-        ctx.lineWidth = 4;
-        ctx.strokeRect(itemX, itemY - LEGEND_BOX_SIZE / 2, LEGEND_BOX_SIZE, LEGEND_BOX_SIZE);
-        
-        // Dibujar el texto
-        ctx.fillStyle = COLOR_TEXT;
-        ctx.fillText(item.text, itemX + LEGEND_BOX_SIZE + 10, itemY + 5);
-        
-        // **ACTUALIZACIÓN CLAVE DE maxLegendY**: Capturamos la posición Y más baja de la leyenda
-        maxLegendY = Math.max(maxLegendY, itemY + 5);
-    });
-
-    // 6. Pie de Página
-    // Utilizamos la última posición de la leyenda (maxLegendY) + un margen de separación de 20px
-    const footerY = maxLegendY + 20 + MARGIN / 2; // 20px de separación + la mitad del margen (20px)
-
-    ctx.fillStyle = COLOR_SECONDARY_TEXT;
-    ctx.font = `14px ${FONT_FAMILY}`;
-    ctx.textAlign = 'left';
-    ctx.fillText(`Fuente: ${API_NAME}`, MARGIN, footerY);
-    ctx.textAlign = 'right';
-    ctx.fillText(`Generado el: ${new Date().toLocaleDateString('es-ES')}`, CANVAS_WIDTH_ARBOL - MARGIN, footerY);
-    
-    // 7. Recorte Final (Crea un nuevo canvas del tamaño exacto)
-    // El alto final es la posición del texto del pie de página + un margen inferior (MARGIN / 2 = 20)
-    const FINAL_CANVAS_HEIGHT = footerY + (MARGIN / 2); 
-
-    // **ACTUALIZACIÓN CLAVE**: Creamos un nuevo canvas con el tamaño final exacto
-    // Si el alto final es menor que el alto del dibujo, usamos el alto del dibujo
-    const finalHeight = Math.max(TENTATIVE_CANVAS_HEIGHT, FINAL_CANVAS_HEIGHT); // Usar el más grande para seguridad, aunque debería ser FINAL_CANVAS_HEIGHT
-    
-    // Para asegurar el recorte al contenido *real* (el pie de página), usamos FINAL_CANVAS_HEIGHT
-    const finalCanvas = createCanvas(CANVAS_WIDTH_ARBOL, FINAL_CANVAS_HEIGHT);
-    const finalCtx = finalCanvas.getContext('2d');
-    
-    // Copiamos el contenido del canvas tentativo al canvas final
-    finalCtx.drawImage(canvas, 0, 0, CANVAS_WIDTH_ARBOL, FINAL_CANVAS_HEIGHT, 0, 0, CANVAS_WIDTH_ARBOL, FINAL_CANVAS_HEIGHT);
-    
-    return finalCanvas.toBuffer('image/png');
-};
-
 /**
  * Función auxiliar para dividir texto en líneas que caben dentro de un ancho máximo.
- * @param {CanvasRenderingContext2D} ctx - Contexto del canvas.
  * @param {string} text - Texto a envolver.
  * @param {number} maxWidth - Ancho máximo permitido para el texto.
- * @param {number} lineHeight - Altura de línea.
- * @returns {Array<{lines: string[], height: number}>} Objeto con la lista de líneas y la altura total.
+ * @param {number} fontSize - Tamaño de fuente.
+ * @param {object} doc - Documento PDF.
+ * @returns {Array<string>} Array de líneas.
  */
-const wrapText = (ctx, text, maxWidth, lineHeight) => {
+const wrapTextPDF = (text, maxWidth, fontSize, doc) => {
     const words = text.split(' ');
-    let line = '';
     const lines = [];
+    let currentLine = '';
 
-    for (let i = 0; i < words.length; i++) {
-        const testLine = line + words[i] + ' ';
-        const metrics = ctx.measureText(testLine);
-        const testWidth = metrics.width;
+    for (const word of words) {
+        const testLine = currentLine ? `${currentLine} ${word}` : word;
+        const testWidth = doc.widthOfString(testLine, { fontSize });
 
-        if (testWidth > maxWidth && i > 0) {
-            lines.push(line.trim());
-            line = words[i] + ' ';
+        if (testWidth <= maxWidth) {
+            currentLine = testLine;
         } else {
-            line = testLine;
+            if (currentLine) lines.push(currentLine);
+            currentLine = word;
         }
     }
-    lines.push(line.trim());
-    return { lines, height: lines.length * lineHeight };
+
+    if (currentLine) lines.push(currentLine);
+    return lines;
 };
 
+// ==============================================================================
+//  FUNCIONES DE GENERACIÓN DE PDF (ÁRBOL GENEALÓGICO)
+// ==============================================================================
+
+/**
+ * Genera el PDF del Árbol Genealógico con información paterna y materna en hojas separadas.
+ */
+const generateGenealogyTreePDF = async (rawDocumento, principal, familiares) => {
+    // Crear un nuevo documento PDF
+    const doc = new PDFDocument({
+        size: 'A4',
+        margin: 50,
+        bufferPages: true
+    });
+
+    const buffers = [];
+    doc.on('data', buffers.push.bind(buffers));
+    doc.on('end', () => {});
+
+    // Separar familiares en paterna y materna
+    const familiaresPaterna = familiares.filter(f => {
+        const tipo = (f.tipo || '').toUpperCase();
+        return tipo.includes('PADRE') || tipo.includes('HERMANO') || 
+               tipo.includes('TIO') || tipo.includes('PRIMO') || 
+               tipo.includes('HIJO') || tipo.includes('SOBRINO') ||
+               (tipo.includes('FAMILIAR') && !tipo.includes('MADRE') && !tipo.includes('HERMANA') && 
+                !tipo.includes('TIA') && !tipo.includes('PRIMA') && !tipo.includes('HIJA') && !tipo.includes('SOBRINA'));
+    });
+
+    const familiaresMaterna = familiares.filter(f => {
+        const tipo = (f.tipo || '').toUpperCase();
+        return tipo.includes('MADRE') || tipo.includes('HERMANA') || 
+               tipo.includes('TIA') || tipo.includes('PRIMA') || 
+               tipo.includes('HIJA') || tipo.includes('SOBRINA');
+    });
+
+    // --- PÁGINA 1: FAMILIA PATERNA ---
+    doc.addPage();
+    
+    // Título
+    doc.fontSize(24)
+       .font('Helvetica-Bold')
+       .text('ÁRBOL GENEALÓGICO', { align: 'center' })
+       .moveDown(0.5);
+
+    doc.fontSize(16)
+       .font('Helvetica')
+       .text(`Familia Paterna - DNI: ${rawDocumento}`, { align: 'center' })
+       .moveDown(1);
+
+    // Información del Principal
+    const principalData = getFormattedPersonData(principal);
+    doc.fontSize(14)
+       .font('Helvetica-Bold')
+       .text('PERSONA PRINCIPAL:', { underline: true })
+       .moveDown(0.3);
+
+    doc.fontSize(12)
+       .font('Helvetica')
+       .text(`Nombre: ${principalData.nombres}`)
+       .text(`Apellidos: ${principalData.apellido_paterno} ${principalData.apellido_materno}`)
+       .text(`DNI: ${principalData.dni}`)
+       .moveDown(1);
+
+    // Tabla de Familiares Paternos
+    doc.fontSize(14)
+       .font('Helvetica-Bold')
+       .text('FAMILIARES PATERNA:', { underline: true })
+       .moveDown(0.5);
+
+    // Encabezados de la tabla
+    const tableTop = doc.y;
+    const tableLeft = 50;
+    const columnWidths = [150, 150, 100, 150];
+    
+    // Encabezados
+    doc.fontSize(10)
+       .font('Helvetica-Bold')
+       .fillColor('#333333')
+       .text('Parentesco', tableLeft, tableTop)
+       .text('Nombres', tableLeft + columnWidths[0], tableTop)
+       .text('DNI', tableLeft + columnWidths[0] + columnWidths[1], tableTop)
+       .text('Apellidos', tableLeft + columnWidths[0] + columnWidths[1] + columnWidths[2], tableTop);
+
+    // Línea de separación
+    doc.moveTo(tableLeft, tableTop + 15)
+       .lineTo(tableLeft + columnWidths.reduce((a, b) => a + b, 0), tableTop + 15)
+       .stroke();
+
+    let currentY = tableTop + 25;
+
+    // Filas de la tabla
+    familiaresPaterna.forEach((familiar, index) => {
+        if (currentY > 700) {
+            doc.addPage();
+            currentY = 50;
+            
+            // Encabezados en nueva página
+            doc.fontSize(10)
+               .font('Helvetica-Bold')
+               .fillColor('#333333')
+               .text('Parentesco', tableLeft, currentY)
+               .text('Nombres', tableLeft + columnWidths[0], currentY)
+               .text('DNI', tableLeft + columnWidths[0] + columnWidths[1], currentY)
+               .text('Apellidos', tableLeft + columnWidths[0] + columnWidths[1] + columnWidths[2], currentY);
+
+            currentY += 25;
+        }
+
+        const familiarData = getFormattedPersonData(familiar);
+        
+        doc.fontSize(10)
+           .font('Helvetica')
+           .fillColor('#000000')
+           .text(familiar.tipo || 'FAMILIAR', tableLeft, currentY)
+           .text(familiarData.nombres, tableLeft + columnWidths[0], currentY)
+           .text(familiarData.dni, tableLeft + columnWidths[0] + columnWidths[1], currentY)
+           .text(`${familiarData.apellido_paterno} ${familiarData.apellido_materno}`, 
+                 tableLeft + columnWidths[0] + columnWidths[1] + columnWidths[2], currentY);
+
+        currentY += 20;
+        
+        // Línea separadora
+        if (index < familiaresPaterna.length - 1) {
+            doc.moveTo(tableLeft, currentY - 5)
+               .lineTo(tableLeft + columnWidths.reduce((a, b) => a + b, 0), currentY - 5)
+               .strokeColor('#CCCCCC')
+               .lineWidth(0.5)
+               .stroke();
+        }
+    });
+
+    // Pie de página para hoja paterna
+    doc.fontSize(10)
+       .fillColor('#666666')
+       .text(`Total Familiares Paternos: ${familiaresPaterna.length}`, 50, 750, { align: 'left' })
+       .text(`Página 1 de 2 - Familia Paterna`, 0, 750, { align: 'center' })
+       .text(`Generado el: ${new Date().toLocaleDateString('es-ES')}`, 0, 750, { align: 'right' });
+
+    // --- PÁGINA 2: FAMILIA MATERNA ---
+    doc.addPage();
+    
+    // Título
+    doc.fontSize(24)
+       .font('Helvetica-Bold')
+       .text('ÁRBOL GENEALÓGICO', { align: 'center' })
+       .moveDown(0.5);
+
+    doc.fontSize(16)
+       .font('Helvetica')
+       .text(`Familia Materna - DNI: ${rawDocumento}`, { align: 'center' })
+       .moveDown(1);
+
+    // Información del Principal (opcional, se puede repetir o no)
+    doc.fontSize(14)
+       .font('Helvetica-Bold')
+       .text('PERSONA PRINCIPAL:', { underline: true })
+       .moveDown(0.3);
+
+    doc.fontSize(12)
+       .font('Helvetica')
+       .text(`Nombre: ${principalData.nombres}`)
+       .text(`Apellidos: ${principalData.apellido_paterno} ${principalData.apellido_materno}`)
+       .text(`DNI: ${principalData.dni}`)
+       .moveDown(1);
+
+    // Tabla de Familiares Maternos
+    doc.fontSize(14)
+       .font('Helvetica-Bold')
+       .text('FAMILIARES MATERNA:', { underline: true })
+       .moveDown(0.5);
+
+    // Encabezados de la tabla
+    const tableTopMaterna = doc.y;
+    
+    // Encabezados
+    doc.fontSize(10)
+       .font('Helvetica-Bold')
+       .fillColor('#333333')
+       .text('Parentesco', tableLeft, tableTopMaterna)
+       .text('Nombres', tableLeft + columnWidths[0], tableTopMaterna)
+       .text('DNI', tableLeft + columnWidths[0] + columnWidths[1], tableTopMaterna)
+       .text('Apellidos', tableLeft + columnWidths[0] + columnWidths[1] + columnWidths[2], tableTopMaterna);
+
+    // Línea de separación
+    doc.moveTo(tableLeft, tableTopMaterna + 15)
+       .lineTo(tableLeft + columnWidths.reduce((a, b) => a + b, 0), tableTopMaterna + 15)
+       .stroke();
+
+    currentY = tableTopMaterna + 25;
+
+    // Filas de la tabla
+    familiaresMaterna.forEach((familiar, index) => {
+        if (currentY > 700) {
+            doc.addPage();
+            currentY = 50;
+            
+            // Encabezados en nueva página
+            doc.fontSize(10)
+               .font('Helvetica-Bold')
+               .fillColor('#333333')
+               .text('Parentesco', tableLeft, currentY)
+               .text('Nombres', tableLeft + columnWidths[0], currentY)
+               .text('DNI', tableLeft + columnWidths[0] + columnWidths[1], currentY)
+               .text('Apellidos', tableLeft + columnWidths[0] + columnWidths[1] + columnWidths[2], currentY);
+
+            currentY += 25;
+        }
+
+        const familiarData = getFormattedPersonData(familiar);
+        
+        doc.fontSize(10)
+           .font('Helvetica')
+           .fillColor('#000000')
+           .text(familiar.tipo || 'FAMILIAR', tableLeft, currentY)
+           .text(familiarData.nombres, tableLeft + columnWidths[0], currentY)
+           .text(familiarData.dni, tableLeft + columnWidths[0] + columnWidths[1], currentY)
+           .text(`${familiarData.apellido_paterno} ${familiarData.apellido_materno}`, 
+                 tableLeft + columnWidths[0] + columnWidths[1] + columnWidths[2], currentY);
+
+        currentY += 20;
+        
+        // Línea separadora
+        if (index < familiaresMaterna.length - 1) {
+            doc.moveTo(tableLeft, currentY - 5)
+               .lineTo(tableLeft + columnWidths.reduce((a, b) => a + b, 0), currentY - 5)
+               .strokeColor('#CCCCCC')
+               .lineWidth(0.5)
+               .stroke();
+        }
+    });
+
+    // Pie de página para hoja materna
+    doc.fontSize(10)
+       .fillColor('#666666')
+       .text(`Total Familiares Maternos: ${familiaresMaterna.length}`, 50, 750, { align: 'left' })
+       .text(`Página 2 de 2 - Familia Materna`, 0, 750, { align: 'center' })
+       .text(`Generado el: ${new Date().toLocaleDateString('es-ES')}`, 0, 750, { align: 'right' });
+
+    // Finalizar el documento
+    doc.end();
+
+    // Esperar a que el documento termine de generarse
+    return new Promise((resolve, reject) => {
+        doc.on('end', () => {
+            const pdfBuffer = Buffer.concat(buffers);
+            resolve(pdfBuffer);
+        });
+        
+        doc.on('error', reject);
+    });
+};
 
 // ==============================================================================
 //  FUNCIONES DE DIBUJO (ACTA DE MATRIMONIO) - MANTENIDA
@@ -1184,7 +902,7 @@ const generateMarriageCertificateImage = async (rawDocumento, principal, data) =
 
 
 // ==============================================================================
-// --- ENDPOINT 1: Nueva API de Árbol Genealógico ---
+// --- ENDPOINT 1: Nueva API de Árbol Genealógico (MODIFICADO PARA PDF) ---
 // ==============================================================================
 app.get("/consultar-arbol", async (req, res) => {
     const rawDocumento = req.query.dni;
@@ -1226,23 +944,22 @@ app.get("/consultar-arbol", async (req, res) => {
         // Filtrar duplicados por DNI (puede ocurrir si un padre aparece dos veces)
         familiares = familiares.filter((v, i, a) => a.findIndex(t => (t.dni === v.dni)) === i);
         
-        // 2. Generar el buffer de la imagen
-        // Se pasa principal y la lista de familiares
-        const imagenBuffer = await generateGenealogyTreeImage(rawDocumento, principal, familiares);
+        // 2. Generar el buffer del PDF (NUEVO: Ahora es PDF)
+        const pdfBuffer = await generateGenealogyTreePDF(rawDocumento, principal, familiares);
         
-        // 3. Subir imagen si no existe o obtener la URL de la imagen existente
-        const { url: githubRawUrl, status } = await uploadOrReturnExisting(rawDocumento, API_NAME, imagenBuffer);
+        // 3. Subir PDF si no existe o obtener la URL del PDF existente (NUEVO: ahora es PDF)
+        const { url: githubRawUrl, status } = await uploadOrReturnExisting(rawDocumento, API_NAME, pdfBuffer, 'pdf');
 
         // 4. Crear la URL final de descarga a través del proxy
-        const finalImageUrl = `${API_BASE_URL}/descargar-ficha?url=${encodeURIComponent(githubRawUrl)}`;
+        const finalFileUrl = `${API_BASE_URL}/descargar-ficha?url=${encodeURIComponent(githubRawUrl)}`;
 
         // 5. Obtener datos de la persona principal formateados
         const personaDataFormatted = getFormattedPersonData(principal);
 
         // 6. Respuesta JSON
         const messageDetail = status === "existing" 
-            ? `Imagen ${API_NAME} existente recuperada con éxito.`
-            : `Imagen ${API_NAME} generada y subida con éxito.`
+            ? `PDF ${API_NAME} existente recuperado con éxito.`
+            : `PDF ${API_NAME} generado y subido con éxito.`
 
         res.json({
             "message": "found data",
@@ -1255,7 +972,7 @@ app.get("/consultar-arbol", async (req, res) => {
                 },
                 "quantity": familiares.length,
                 "coincidences": [
-                  {"message": messageDetail, "url": finalImageUrl}
+                  {"message": messageDetail, "url": finalFileUrl, "tipo": "pdf"}
                 ]
             }
         });
@@ -1265,7 +982,7 @@ app.get("/consultar-arbol", async (req, res) => {
         const status = error.response?.status || 500;
         res.status(status).json({ 
             "message": "error", 
-            "error": `Error al generar la Imagen ${API_NAME}`, 
+            "error": `Error al generar el PDF ${API_NAME}`, 
             "detalle": error.message 
         }); 
     } 
@@ -1449,14 +1166,14 @@ app.get("/descargar-ficha", async (req, res) => {
     let { url } = req.query; 
         
     if (!url) {
-        return res.status(400).send("Falta el parámetro 'url' de la imagen.");
+        return res.status(400).send("Falta el parámetro 'url' del archivo.");
     }
     
     let decodedUrl = '';
     try {
         decodedUrl = decodeURIComponent(url);
     } catch (e) {
-        return res.status(400).send("URL de imagen codificada inválida.");
+        return res.status(400).send("URL codificada inválida.");
     }
 
     try {
@@ -1470,21 +1187,32 @@ app.get("/descargar-ficha", async (req, res) => {
         };
 
         const response = await axios.get(decodedUrl, config);
-        const imageBuffer = Buffer.from(response.data);
+        const fileBuffer = Buffer.from(response.data);
 
         const fileName = path.basename(decodedUrl);
+        const fileExtension = path.extname(decodedUrl).toLowerCase();
+        
+        // Determinar el tipo de contenido según la extensión
+        let contentType = 'application/octet-stream';
+        if (fileExtension === '.pdf') {
+            contentType = 'application/pdf';
+        } else if (fileExtension === '.png') {
+            contentType = 'image/png';
+        } else if (fileExtension === '.jpg' || fileExtension === '.jpeg') {
+            contentType = 'image/jpeg';
+        }
 
         res.set({
-            'Content-Type': 'image/png', 
+            'Content-Type': contentType, 
             'Content-Disposition': `attachment; filename="${fileName}"`, 
-            'Content-Length': imageBuffer.length 
+            'Content-Length': fileBuffer.length 
         });
 
-        res.send(imageBuffer);
+        res.send(fileBuffer);
 
     } catch (error) {
         const statusCode = error.response?.status || 'N/A';
-        console.error(`Error al descargar imagen (PROXY): Status ${statusCode}. Mensaje: ${error.message}`);
+        console.error(`Error al descargar archivo (PROXY): Status ${statusCode}. Mensaje: ${error.message}`);
         res.status(500).send(`Error al procesar la descarga del archivo. Detalle: ${error.message}`);
     }
 });
