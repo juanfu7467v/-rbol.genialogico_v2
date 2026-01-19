@@ -7,7 +7,6 @@ const PDFDocument = require('pdfkit');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configuración básica
 app.use(cors());
 
 // --- CONFIGURACIÓN DE APIS ---
@@ -16,193 +15,23 @@ const ARBOL_GENEALOGICO_API_URL = process.env.ARBOL_GENEALOGICO_API_URL || "http
 const FONT_FAMILY = "Helvetica"; 
 
 // ==============================================================================
-//  UTILIDADES DE DIBUJO (CANVAS)
+//  UTILIDADES DE DIBUJO Y ESTILOS
 // ==============================================================================
 
-const drawFamilyListPage = async (ctx, width, height, title, principal, familiares, side) => {
-    ctx.fillStyle = "#FFFFFF";
-    ctx.fillRect(0, 0, width, height);
-
-    const MARGIN = 40;
-    let currentY = MARGIN;
-
-    // Header Estilo
-    ctx.fillStyle = "#000000";
-    ctx.font = `bold 50px ${FONT_FAMILY}`;
-    ctx.textAlign = "left";
-    ctx.fillText("Pe", MARGIN, currentY + 40);
-    
-    ctx.font = `bold 25px ${FONT_FAMILY}`;
-    ctx.fillText("REPORTE GENEALÓGICO", MARGIN, currentY + 70);
-
-    ctx.textAlign = "right";
-    ctx.font = `bold 20px ${FONT_FAMILY}`;
-    ctx.fillText("Consulta pe apk", width - MARGIN, currentY + 40);
-
-    // Decoración visual de fondo
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(250, 0);
-    ctx.lineTo(200, 130);
-    ctx.lineTo(0, 130);
-    ctx.closePath();
-    ctx.globalAlpha = 0.05;
-    ctx.fillStyle = "#000000";
-    ctx.fill();
-    ctx.globalAlpha = 1.0;
-
-    currentY += 100;
-
-    // --- TABLA INFORMACIÓN TITULAR ---
-    ctx.textAlign = "left";
-    ctx.font = `bold 22px ${FONT_FAMILY}`;
-    ctx.fillStyle = "#2C3E50";
-    ctx.fillText("Información del Titular", MARGIN, currentY);
-    currentY += 15;
-
-    const infoHeaders = ["DNI", "Nombres y Apellidos", "Edad", "Fec. Nac."];
-    const infoValues = [
-        principal.dni, 
-        `${principal.nom} ${principal.ap} ${principal.am}`, 
-        `${principal.edad} años`,
-        principal.fn || "-"
-    ];
-
-    drawSimpleTable(ctx, MARGIN, currentY, width - (MARGIN * 2), infoHeaders, infoValues);
-    currentY += 100;
-
-    // --- TABLA DE FAMILIARES ---
-    ctx.font = `bold 22px ${FONT_FAMILY}`;
-    ctx.fillStyle = "#2C3E50";
-    ctx.fillText(title, MARGIN, currentY);
-    currentY += 15;
-
-    const tableWidth = width - (MARGIN * 2);
-    const rowHeight = 35;
-    const colWidths = [0.18, 0.42, 0.18, 0.12, 0.10]; 
-
-    // Dibujar Cabecera de Tabla
-    ctx.fillStyle = "#34495E"; 
-    ctx.fillRect(MARGIN, currentY, tableWidth, rowHeight);
-    
-    ctx.fillStyle = "#FFFFFF";
-    ctx.font = `bold 14px ${FONT_FAMILY}`;
-    let currentX = MARGIN;
-    
-    const headers = ["Parentesco", "Nombre Completo", "DNI", "Género", "Edad"];
-    headers.forEach((h, i) => {
-        ctx.fillText(h, currentX + 10, currentY + 22);
-        currentX += tableWidth * colWidths[i];
-    });
-
-    currentY += rowHeight;
-    ctx.font = "13px Helvetica";
-    
-    familiares.forEach((fam, index) => {
-        if (currentY > height - 100) return; 
-
-        ctx.fillStyle = index % 2 === 0 ? "#FFFFFF" : "#F9F9F9";
-        ctx.fillRect(MARGIN, currentY, tableWidth, rowHeight);
-        
-        ctx.strokeStyle = "#DDDDDD";
-        ctx.lineWidth = 0.5;
-        ctx.strokeRect(MARGIN, currentY, tableWidth, rowHeight);
-
-        ctx.fillStyle = "#000000";
-        let tempX = MARGIN;
-
-        const rowData = [
-            (fam.tipo || "Familiar").substring(0, 20),
-            (`${fam.nom} ${fam.ap} ${fam.am}`).substring(0, 45),
-            fam.dni || "-",
-            fam.ge === "MASCULINO" ? "Masc." : "Fem.",
-            `${fam.edad || "-"} años`
-        ];
-
-        rowData.forEach((text, i) => {
-            ctx.fillText(text, tempX + 10, currentY + 22);
-            tempX += tableWidth * colWidths[i];
-        });
-
-        currentY += rowHeight;
-    });
-
-    if (familiares.length === 0) {
-        ctx.fillStyle = "#666666";
-        ctx.textAlign = "center";
-        ctx.fillText("No se encontraron registros en esta rama.", width / 2, currentY + 30);
-    }
+const COLORS = {
+    PATERNA: "#3498DB", // Azul
+    MATERNA: "#27AE60", // Verde
+    DIRECTA: "#E67E22", // Naranja
+    POLITICA: "#95A5A6", // Gris
+    TEXT_DARK: "#2C3E50",
+    TEXT_LIGHT: "#7F8C8D",
+    WHITE: "#FFFFFF",
+    BG_LIGHT: "#F8F9FA"
 };
 
-const drawSimpleTable = (ctx, x, y, width, headers, values) => {
-    const rowHeight = 50;
-    const colWidth = width / headers.length;
-    
-    ctx.strokeStyle = "#BDC3C7";
-    ctx.lineWidth = 1;
-
-    headers.forEach((h, i) => {
-        let cx = x + (i * colWidth);
-        ctx.fillStyle = "#ECF0F1";
-        ctx.fillRect(cx, y, colWidth, rowHeight / 2);
-        ctx.strokeRect(cx, y, colWidth, rowHeight / 2);
-        
-        ctx.fillStyle = "#FFFFFF";
-        ctx.fillRect(cx, y + (rowHeight/2), colWidth, rowHeight / 2);
-        ctx.strokeRect(cx, y + (rowHeight/2), colWidth, rowHeight / 2);
-
-        ctx.fillStyle = "#7F8C8D";
-        ctx.font = `bold 12px ${FONT_FAMILY}`;
-        ctx.textAlign = "center";
-        ctx.fillText(h.toUpperCase(), cx + (colWidth / 2), y + 17);
-
-        ctx.fillStyle = "#2C3E50";
-        ctx.font = `bold 13px ${FONT_FAMILY}`;
-        ctx.fillText(values[i] || "-", cx + (colWidth / 2), y + 17 + (rowHeight/2));
-    });
-    ctx.textAlign = "left"; 
-};
-
-/**
- * Dibuja una barra con efecto 3D (isométrico simple)
- */
-const draw3DBar = (ctx, x, y, width, height, color) => {
-    const depth = 15;
-    
-    // Cara frontal
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y, width, height);
-    
-    // Cara superior (más clara)
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + depth, y - depth);
-    ctx.lineTo(x + width + depth, y - depth);
-    ctx.lineTo(x + width, y);
-    ctx.closePath();
-    ctx.fillStyle = adjustColor(color, 30);
-    ctx.fill();
-    
-    // Cara lateral (más oscura)
-    ctx.beginPath();
-    ctx.moveTo(x + width, y);
-    ctx.lineTo(x + width + depth, y - depth);
-    ctx.lineTo(x + width + depth, y + height - depth);
-    ctx.lineTo(x + width, y + height);
-    ctx.closePath();
-    ctx.fillStyle = adjustColor(color, -30);
-    ctx.fill();
-};
-
-/**
- * Función auxiliar para aclarar u oscurecer colores hexadecimales
- */
 const adjustColor = (col, amt) => {
     let usePound = false;
-    if (col[0] == "#") {
-        col = col.slice(1);
-        usePound = true;
-    }
+    if (col[0] == "#") { col = col.slice(1); usePound = true; }
     let num = parseInt(col, 16);
     let r = (num >> 16) + amt;
     if (r > 255) r = 255; else if (r < 0) r = 0;
@@ -213,143 +42,329 @@ const adjustColor = (col, amt) => {
     return (usePound ? "#" : "") + (g | (b << 8) | (r << 16)).toString(16).padStart(6, '0');
 };
 
-const drawStatsPage = async (ctx, width, height, stats) => {
-    ctx.fillStyle = "#F4F7F6"; // Fondo ligeramente gris para resaltar el 3D
-    ctx.fillRect(0, 0, width, height);
-    const MARGIN = 60;
+const draw3DBar = (ctx, x, y, width, height, color) => {
+    const depth = 10;
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, width, height);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + depth, y - depth);
+    ctx.lineTo(x + width + depth, y - depth);
+    ctx.lineTo(x + width, y);
+    ctx.closePath();
+    ctx.fillStyle = adjustColor(color, 30);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x + width, y);
+    ctx.lineTo(x + width + depth, y - depth);
+    ctx.lineTo(x + width + depth, y + height - depth);
+    ctx.lineTo(x + width, y + height);
+    ctx.closePath();
+    ctx.fillStyle = adjustColor(color, -30);
+    ctx.fill();
+};
+
+const drawPersonCard = (ctx, x, y, w, h, person, color) => {
+    const radius = 10;
+    ctx.save();
     
-    // Título Principal
-    ctx.fillStyle = "#2C3E50";
-    ctx.textAlign = "center";
-    ctx.font = `bold 45px ${FONT_FAMILY}`;
-    ctx.fillText("RESUMEN ESTADÍSTICO 3D", width / 2, 100);
-
-    // --- SECCIÓN DE TARJETAS 3D ---
-    const cards = [
-        { label: "PATERNA", val: stats.paternaCount, color: "#3498DB" },
-        { label: "MATERNA", val: stats.maternaCount, color: "#1ABC9C" },
-        { label: "HOMBRES", val: stats.hombres, color: "#2980B9" },
-        { label: "MUJERES", val: stats.mujeres, color: "#E67E22" }
-    ];
-
-    const cardWidth = (width - (MARGIN * 2)) / 4 - 20;
-    cards.forEach((card, i) => {
-        const x = MARGIN + (i * (cardWidth + 25));
-        const y = 200;
-        
-        // Sombra de la tarjeta
-        ctx.shadowColor = "rgba(0,0,0,0.1)";
-        ctx.shadowBlur = 15;
-        ctx.shadowOffsetX = 5;
-        ctx.shadowOffsetY = 5;
-        
-        // Dibujar barra 3D como base de la tarjeta
-        draw3DBar(ctx, x, y, cardWidth, 120, card.color);
-        
-        // Reset sombras para el texto
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
-        
-        ctx.fillStyle = "#FFFFFF";
-        ctx.font = `bold 35px ${FONT_FAMILY}`;
-        ctx.textAlign = "center";
-        ctx.fillText(card.val.toString(), x + cardWidth/2, y + 65);
-        
-        ctx.font = `bold 14px ${FONT_FAMILY}`;
-        ctx.fillText(card.label, x + cardWidth/2, y + 95);
-    });
-
-    // --- GRÁFICO DE BARRAS 3D ---
-    const chartY = 550;
-    const chartHeight = 200;
-    const maxVal = Math.max(...cards.map(c => c.val), 1);
-    
-    ctx.fillStyle = "#2C3E50";
-    ctx.font = `bold 22px ${FONT_FAMILY}`;
-    ctx.textAlign = "left";
-    ctx.fillText("Distribución Visual", MARGIN, chartY - 50);
-
-    cards.forEach((card, i) => {
-        const barW = 60;
-        const barH = (card.val / maxVal) * chartHeight;
-        const x = MARGIN + 100 + (i * 180);
-        const y = chartY + (chartHeight - barH);
-        
-        draw3DBar(ctx, x, y, barW, barH, card.color);
-        
-        ctx.fillStyle = "#7F8C8D";
-        ctx.font = `bold 12px ${FONT_FAMILY}`;
-        ctx.textAlign = "center";
-        ctx.fillText(card.label, x + barW/2 + 7, chartY + chartHeight + 30);
-    });
-
-    // --- CONTENEDOR DE RENUNCIA DE RESPONSABILIDAD (DISCLAIMER) ---
-    const discW = width - (MARGIN * 2);
-    const discH = 140;
-    const discX = MARGIN;
-    const discY = height - 220;
-
-    // Fondo del contenedor
-    ctx.fillStyle = "#FFFFFF";
-    ctx.shadowColor = "rgba(0,0,0,0.05)";
+    // Sombra
+    ctx.shadowColor = "rgba(0,0,0,0.1)";
     ctx.shadowBlur = 10;
-    ctx.fillRect(discX, discY, discW, discH);
+    ctx.shadowOffsetX = 3;
+    ctx.shadowOffsetY = 3;
     
-    // Borde lateral de énfasis
-    ctx.fillStyle = "#E74C3C";
-    ctx.fillRect(discX, discY, 5, discH);
-
-    // Texto del Disclaimer
+    // Fondo
+    ctx.fillStyle = COLORS.WHITE;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, radius);
+    ctx.fill();
+    
+    // Borde lateral de color
     ctx.shadowBlur = 0;
-    ctx.textAlign = "left";
-    ctx.fillStyle = "#2C3E50";
-    ctx.font = `bold 18px ${FONT_FAMILY}`;
-    ctx.fillText("RENUNCIA DE RESPONSABILIDAD", discX + 25, discY + 35);
-
-    ctx.fillStyle = "#5D6D7E";
-    ctx.font = `14px ${FONT_FAMILY}`;
-    const lines = [
-        "Le informamos que actuamos estrictamente como intermediarios tecnológicos.",
-        "La información presentada en este reporte proviene íntegramente de una API externa",
-        "y ha sido procesada y visualizada gracias a nuestra infraestructura técnica.",
-        "No nos hacemos responsables por la exactitud o veracidad de los datos fuente."
-    ];
+    ctx.shadowOffsetX = 0;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(x, y, 8, h, [radius, 0, 0, radius]);
+    ctx.fill();
     
-    lines.forEach((line, idx) => {
-        ctx.fillText(line, discX + 25, discY + 65 + (idx * 22));
-    });
-
-    // Pie de página
-    ctx.fillStyle = "#BDC3C7";
-    ctx.font = `italic 12px ${FONT_FAMILY}`;
-    ctx.textAlign = "center";
-    ctx.fillText("Generado por Infraestructura de Consulta Pe - 2026", width / 2, height - 40);
+    // Textos
+    ctx.textAlign = "left";
+    ctx.fillStyle = COLORS.TEXT_DARK;
+    ctx.font = `bold 14px ${FONT_FAMILY}`;
+    const name = `${person.nom} ${person.ap} ${person.am}`.substring(0, 35);
+    ctx.fillText(name, x + 20, y + 25);
+    
+    ctx.font = `12px ${FONT_FAMILY}`;
+    ctx.fillStyle = COLORS.TEXT_LIGHT;
+    ctx.fillText(`DNI: ${person.dni}-${person.dv || '?'}` , x + 20, y + 45);
+    ctx.fillText(`${person.tipo || 'TITULAR'} | ${person.edad} años`, x + 20, y + 65);
+    
+    // Icono Sexo
+    ctx.font = `14px ${FONT_FAMILY}`;
+    const icon = person.ge === "MASCULINO" ? "👨" : "👩";
+    ctx.fillText(icon, x + w - 30, y + 25);
+    
+    ctx.restore();
 };
 
 // ==============================================================================
-//  LÓGICA DE DATOS Y ENDPOINTS
+//  LÓGICA DE CLASIFICACIÓN
 // ==============================================================================
 
-function clasificarFamilia(principal, familiares) {
+function clasificarFamilia(familiares) {
+    const directos = [];
     const paterna = [];
     const materna = [];
-    const hijos = [];
+    const extendida = [];
     
     familiares.forEach(fam => {
         const tipo = (fam.tipo || "").toUpperCase();
-        if (tipo.includes("PADRE") || tipo.includes("PATERNO") || tipo.includes("HERMANO")) {
+        if (tipo === "PADRE" || tipo === "MADRE" || tipo.includes("HERMANO")) {
+            directos.push(fam);
+        } else if (tipo.includes("PATERNO") || tipo.includes("PATERNA")) {
             paterna.push(fam);
-        } else if (tipo.includes("MADRE") || tipo.includes("MATERNA")) {
+        } else if (tipo.includes("MATERNO") || tipo.includes("MATERNA")) {
             materna.push(fam);
-        } else if (tipo.includes("HIJO")) {
-            hijos.push(fam);
         } else {
-            materna.push(fam);
+            extendida.push(fam);
         }
     });
-    return { paterna, materna, hijos };
+    return { directos, paterna, materna, extendida };
 }
+
+// ==============================================================================
+//  PÁGINAS DEL PDF
+// ==============================================================================
+
+const drawHeader = (ctx, width, title) => {
+    ctx.fillStyle = COLORS.TEXT_DARK;
+    ctx.font = `bold 30px ${FONT_FAMILY}`;
+    ctx.textAlign = "left";
+    ctx.fillText("Pe", 40, 60);
+    ctx.font = `bold 18px ${FONT_FAMILY}`;
+    ctx.fillText(title.toUpperCase(), 40, 90);
+    ctx.textAlign = "right";
+    ctx.font = `12px ${FONT_FAMILY}`;
+    ctx.fillText("Consulta pe apk - Reporte Profesional", width - 40, 60);
+    ctx.beginPath();
+    ctx.strokeStyle = "#EEE";
+    ctx.moveTo(40, 110);
+    ctx.lineTo(width - 40, 110);
+    ctx.stroke();
+};
+
+const drawMainPage = async (ctx, width, height, principal, stats) => {
+    ctx.fillStyle = COLORS.BG_LIGHT;
+    ctx.fillRect(0, 0, width, height);
+    drawHeader(ctx, width, "Resumen del Titular");
+    
+    // Tarjeta Principal Destacada
+    const cardW = 450;
+    const cardH = 180;
+    const cardX = (width - cardW) / 2;
+    const cardY = 150;
+    
+    ctx.shadowColor = "rgba(0,0,0,0.15)";
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = COLORS.WHITE;
+    ctx.beginPath();
+    ctx.roundRect(cardX, cardY, cardW, cardH, 15);
+    ctx.fill();
+    
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = COLORS.DIRECTA;
+    ctx.beginPath();
+    ctx.roundRect(cardX, cardY, cardW, 10, [15, 15, 0, 0]);
+    ctx.fill();
+    
+    ctx.textAlign = "center";
+    ctx.fillStyle = COLORS.TEXT_DARK;
+    ctx.font = `bold 24px ${FONT_FAMILY}`;
+    ctx.fillText(`${principal.nom} ${principal.ap} ${principal.am}`, width / 2, cardY + 50);
+    
+    ctx.font = `16px ${FONT_FAMILY}`;
+    ctx.fillStyle = COLORS.TEXT_LIGHT;
+    ctx.fillText(`DNI: ${principal.dni} - Verificador: ${principal.dv}`, width / 2, cardY + 80);
+    ctx.fillText(`Nacimiento: ${principal.fn} (${principal.edad} años)`, width / 2, cardY + 110);
+    ctx.fillText(`Sexo: ${principal.ge} ${principal.ge === "MASCULINO" ? "👨" : "👩"}`, width / 2, cardY + 140);
+
+    // Mini Resumen
+    const items = [
+        { l: "Total Familiares", v: stats.total },
+        { l: "Verificación", v: "ALTA" }
+    ];
+    items.forEach((item, i) => {
+        const x = (width / 2) - 100 + (i * 200);
+        ctx.fillStyle = COLORS.TEXT_DARK;
+        ctx.font = `bold 20px ${FONT_FAMILY}`;
+        ctx.fillText(item.v, x, 400);
+        ctx.font = `12px ${FONT_FAMILY}`;
+        ctx.fillStyle = COLORS.TEXT_LIGHT;
+        ctx.fillText(item.l, x, 420);
+    });
+};
+
+const drawFamilyPage = async (ctx, width, height, title, familiares, color) => {
+    ctx.fillStyle = COLORS.BG_LIGHT;
+    ctx.fillRect(0, 0, width, height);
+    drawHeader(ctx, width, title);
+    
+    const MARGIN = 50;
+    const CARD_W = 250;
+    const CARD_H = 80;
+    const GAP = 20;
+    
+    let currentX = MARGIN;
+    let currentY = 150;
+    
+    if (familiares.length === 0) {
+        ctx.textAlign = "center";
+        ctx.fillStyle = COLORS.TEXT_LIGHT;
+        ctx.fillText("No se encontraron registros en esta categoría.", width / 2, height / 2);
+        return;
+    }
+
+    familiares.forEach((fam, i) => {
+        if (currentY + CARD_H > height - 50) return;
+        drawPersonCard(ctx, currentX, currentY, CARD_W, CARD_H, fam, color);
+        
+        currentX += CARD_W + GAP;
+        if (currentX + CARD_W > width - MARGIN) {
+            currentX = MARGIN;
+            currentY += CARD_H + GAP;
+        }
+    });
+};
+
+const drawStatsPage = async (ctx, width, height, stats) => {
+    ctx.fillStyle = COLORS.BG_LIGHT;
+    ctx.fillRect(0, 0, width, height);
+    drawHeader(ctx, width, "Análisis Estadístico 3D");
+    
+    const MARGIN = 60;
+    const chartHeight = 150;
+    
+    // Gráfico 1: Distribución por Sexo
+    ctx.fillStyle = COLORS.TEXT_DARK;
+    ctx.font = `bold 16px ${FONT_FAMILY}`;
+    ctx.textAlign = "left";
+    ctx.fillText("Distribución por Sexo", MARGIN, 180);
+    
+    const sexData = [
+        { l: "Hombres", v: stats.hombres, c: COLORS.PATERNA },
+        { l: "Mujeres", v: stats.mujeres, c: COLORS.DIRECTA }
+    ];
+    
+    sexData.forEach((d, i) => {
+        const barW = 80;
+        const barH = (d.v / (stats.total || 1)) * chartHeight;
+        const x = MARGIN + 50 + (i * 150);
+        const y = 350 - barH;
+        draw3DBar(ctx, x, y, barW, barH, d.c);
+        ctx.fillStyle = COLORS.TEXT_DARK;
+        ctx.textAlign = "center";
+        ctx.fillText(`${d.v}`, x + barW/2, y - 20);
+        ctx.font = `12px ${FONT_FAMILY}`;
+        ctx.fillText(d.l, x + barW/2, 370);
+    });
+
+    // Gráfico 2: Distribución por Ramas
+    ctx.textAlign = "left";
+    ctx.font = `bold 16px ${FONT_FAMILY}`;
+    ctx.fillText("Distribución por Ramas Familiares", MARGIN, 450);
+    
+    const branchData = [
+        { l: "Directa", v: stats.directos, c: COLORS.DIRECTA },
+        { l: "Paterna", v: stats.paterna, c: COLORS.PATERNA },
+        { l: "Materna", v: stats.materna, c: COLORS.MATERNA },
+        { l: "Política", v: stats.extendida, c: COLORS.POLITICA }
+    ];
+    
+    branchData.forEach((d, i) => {
+        const barW = 60;
+        const barH = (d.v / (stats.total || 1)) * chartHeight;
+        const x = MARGIN + 30 + (i * 130);
+        const y = 650 - barH;
+        draw3DBar(ctx, x, y, barW, barH, d.c);
+        ctx.fillStyle = COLORS.TEXT_DARK;
+        ctx.textAlign = "center";
+        ctx.fillText(`${d.v}`, x + barW/2, y - 20);
+        ctx.font = `10px ${FONT_FAMILY}`;
+        ctx.fillText(d.l, x + barW/2, 670);
+    });
+};
+
+const drawLegendPage = async (ctx, width, height) => {
+    ctx.fillStyle = COLORS.BG_LIGHT;
+    ctx.fillRect(0, 0, width, height);
+    drawHeader(ctx, width, "Leyenda y Responsabilidad");
+    
+    const MARGIN = 60;
+    let y = 180;
+    
+    // Leyenda
+    ctx.fillStyle = COLORS.TEXT_DARK;
+    ctx.font = `bold 18px ${FONT_FAMILY}`;
+    ctx.textAlign = "left";
+    ctx.fillText("Guía Visual", MARGIN, y);
+    y += 40;
+    
+    const legend = [
+        { l: "Familia Paterna", c: COLORS.PATERNA },
+        { l: "Familia Materna", c: COLORS.MATERNA },
+        { l: "Familia Directa", c: COLORS.DIRECTA },
+        { l: "Familia Política / Extendida", c: COLORS.POLITICA }
+    ];
+    
+    legend.forEach(item => {
+        ctx.fillStyle = item.c;
+        ctx.beginPath();
+        ctx.roundRect(MARGIN, y - 15, 20, 20, 5);
+        ctx.fill();
+        ctx.fillStyle = COLORS.TEXT_DARK;
+        ctx.font = `14px ${FONT_FAMILY}`;
+        ctx.fillText(item.l, MARGIN + 40, y);
+        y += 35;
+    });
+
+    // Disclaimer
+    y += 50;
+    const discW = width - (MARGIN * 2);
+    const discH = 200;
+    ctx.fillStyle = COLORS.WHITE;
+    ctx.shadowColor = "rgba(0,0,0,0.05)";
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.roundRect(MARGIN, y, discW, discH, 10);
+    ctx.fill();
+    
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#E74C3C";
+    ctx.fillRect(MARGIN, y, 5, discH);
+    
+    ctx.fillStyle = COLORS.TEXT_DARK;
+    ctx.font = `bold 16px ${FONT_FAMILY}`;
+    ctx.fillText("RENUNCIA DE RESPONSABILIDAD", MARGIN + 25, y + 40);
+    
+    ctx.font = `13px ${FONT_FAMILY}`;
+    ctx.fillStyle = COLORS.TEXT_LIGHT;
+    const lines = [
+        "• Esta plataforma actúa únicamente como intermediario tecnológico.",
+        "• La información proviene íntegramente de una API externa de terceros.",
+        "• Los datos no han sido modificados ni alterados por nuestro sistema.",
+        "• Este reporte es posible gracias a nuestra infraestructura de procesamiento.",
+        "• La información es de carácter referencial y no tiene validez legal.",
+        "• No nos responsabilizamos por errores en la fuente original de los datos."
+    ];
+    lines.forEach((line, i) => {
+        ctx.fillText(line, MARGIN + 25, y + 75 + (i * 22));
+    });
+};
+
+// ==============================================================================
+//  ENDPOINTS
+// ==============================================================================
 
 app.get("/consultar-arbol", async (req, res) => {
     const dni = req.query.dni;
@@ -361,8 +376,8 @@ app.get("/consultar-arbol", async (req, res) => {
         const finalUrl = `${API_BASE_URL}/descargar-arbol-pdf?dni=${dni}`;
         res.json({
             "dni": data.dni,
-            "apellidos": `${data.ap || data.apellido_paterno} ${data.am || data.apellido_materno}`.trim(),
-            "nombres": data.nom || data.nombres,
+            "apellidos": `${data.ap} ${data.am}`.trim(),
+            "nombres": data.nom,
             "estado": "FICHA GENERADA",
             "archivo": { "tipo": "PDF", "url": finalUrl }
         });
@@ -380,44 +395,45 @@ app.get("/descargar-arbol-pdf", async (req, res) => {
 
         const principal = data.person;
         const familiares = data.coincidences || [];
-
-        const { paterna, materna, hijos } = clasificarFamilia(principal, familiares);
+        const { directos, paterna, materna, extendida } = clasificarFamilia(familiares);
         
         const stats = {
-            paternaCount: paterna.length,
-            maternaCount: materna.length,
+            total: familiares.length,
             hombres: familiares.filter(f => f.ge === "MASCULINO").length,
-            mujeres: familiares.filter(f => f.ge === "FEMENINO").length
+            mujeres: familiares.filter(f => f.ge === "FEMENINO").length,
+            directos: directos.length,
+            paterna: paterna.length,
+            materna: materna.length,
+            extendida: extendida.length
         };
 
         const doc = new PDFDocument({ autoFirstPage: false });
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=Genealogia_${dni}.pdf`);
+        res.setHeader('Content-Disposition', `attachment; filename=Arbol_Genealogico_${dni}.pdf`);
         doc.pipe(res);
 
-        const A4_WIDTH = 595.28;
-        const A4_HEIGHT = 841.89;
-        const SCALE = 2; 
-        const C_W = A4_WIDTH * SCALE;
-        const C_H = A4_HEIGHT * SCALE;
+        const A4_W = 595.28;
+        const A4_H = 841.89;
+        const SCALE = 2;
+        const C_W = A4_W * SCALE;
+        const C_H = A4_H * SCALE;
 
-        // Página 1: Rama Paterna
-        const canvas1 = createCanvas(C_W, C_H);
-        await drawFamilyListPage(canvas1.getContext("2d"), C_W, C_H, "FAMILIA PATERNA Y HERMANOS", principal, paterna, "Rama Paterna");
-        doc.addPage({ size: 'A4' });
-        doc.image(canvas1.toBuffer(), 0, 0, { width: A4_WIDTH, height: A4_HEIGHT });
+        const pages = [
+            { title: "Principal", fn: (ctx) => drawMainPage(ctx, C_W, C_H, principal, stats) },
+            { title: "Familia Directa", fn: (ctx) => drawFamilyPage(ctx, C_W, C_H, "Familia Directa", directos, COLORS.DIRECTA) },
+            { title: "Rama Paterna", fn: (ctx) => drawFamilyPage(ctx, C_W, C_H, "Rama Paterna", paterna, COLORS.PATERNA) },
+            { title: "Rama Materna", fn: (ctx) => drawFamilyPage(ctx, C_W, C_H, "Rama Materna", materna, COLORS.MATERNA) },
+            { title: "Familia Extendida", fn: (ctx) => drawFamilyPage(ctx, C_W, C_H, "Familia Extendida y Política", extendida, COLORS.POLITICA) },
+            { title: "Estadísticas", fn: (ctx) => drawStatsPage(ctx, C_W, C_H, stats) },
+            { title: "Leyenda", fn: (ctx) => drawLegendPage(ctx, C_W, C_H) }
+        ];
 
-        // Página 2: Rama Materna y otros
-        const canvas2 = createCanvas(C_W, C_H);
-        await drawFamilyListPage(canvas2.getContext("2d"), C_W, C_H, "FAMILIA MATERNA Y OTROS", principal, materna, "Rama Materna");
-        doc.addPage({ size: 'A4' });
-        doc.image(canvas2.toBuffer(), 0, 0, { width: A4_WIDTH, height: A4_HEIGHT });
-
-        // Página 3: Estadísticas 3D y Disclaimer
-        const canvas3 = createCanvas(C_W, C_H);
-        await drawStatsPage(canvas3.getContext("2d"), C_W, C_H, stats);
-        doc.addPage({ size: 'A4' });
-        doc.image(canvas3.toBuffer(), 0, 0, { width: A4_WIDTH, height: A4_HEIGHT });
+        for (const page of pages) {
+            const canvas = createCanvas(C_W, C_H);
+            await page.fn(canvas.getContext("2d"));
+            doc.addPage({ size: 'A4' });
+            doc.image(canvas.toBuffer(), 0, 0, { width: A4_W, height: A4_H });
+        }
 
         doc.end();
     } catch (error) {
