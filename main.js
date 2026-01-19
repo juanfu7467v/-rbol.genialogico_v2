@@ -1,423 +1,255 @@
 const express = require("express");
 const axios = require("axios");
-const { createCanvas, loadImage } = require("canvas");
+const { createCanvas } = require("canvas");
 const cors = require('cors');
 const PDFDocument = require('pdfkit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configuración básica
 app.use(cors());
 
-// -----------------------------------------------------------
-// --- CONFIGURACIÓN DE APIS Y ENTORNOS ---
-// -----------------------------------------------------------
+// --- CONFIGURACIÓN ---
 const API_BASE_URL = process.env.API_BASE_URL || "https://gdni-imagen-v2.fly.dev";
 const ARBOL_GENEALOGICO_API_URL = process.env.ARBOL_GENEALOGICO_API_URL || "https://consulta-pe-imagenes-v2.fly.dev/consultar-arbol"; 
 const FONT_FAMILY = "sans-serif";
 
 // ==============================================================================
-//  UTILIDADES DE DIBUJO (CANVAS)
+//  DIBUJO DE TABLAS DINÁMICAS (CON SOPORTE PARA MUCHOS DATOS)
 // ==============================================================================
 
-const drawFamilyListPage = async (ctx, width, height, title, principal, familiares, side) => {
+const drawFamilyHeader = (ctx, width, title, principal, side, MARGIN) => {
     ctx.fillStyle = "#FFFFFF";
-    ctx.fillRect(0, 0, width, height);
-
-    const MARGIN = 40;
-    let currentY = MARGIN;
+    ctx.fillRect(0, 0, width, 250);
 
     ctx.fillStyle = "#000000";
     ctx.font = `bold 50px ${FONT_FAMILY}`;
     ctx.textAlign = "left";
-    ctx.fillText("Pe", MARGIN, currentY + 40);
+    ctx.fillText("Pe", MARGIN, 80);
     
     ctx.font = `bold 25px ${FONT_FAMILY}`;
-    ctx.fillText("RESULTADO", MARGIN, currentY + 70);
+    ctx.fillText("RESULTADO COMPLETO", MARGIN, 110);
 
     ctx.textAlign = "right";
     ctx.font = `bold 20px ${FONT_FAMILY}`;
-    ctx.fillText("Consulta pe apk", width - MARGIN, currentY + 40);
+    ctx.fillText("Consulta Familiar Pro", width - MARGIN, 80);
 
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(250, 0);
-    ctx.lineTo(200, 130);
-    ctx.lineTo(0, 130);
-    ctx.closePath();
-    ctx.globalAlpha = 0.05;
-    ctx.fillStyle = "#000000";
-    ctx.fill();
-    ctx.globalAlpha = 1.0;
-
-    currentY += 100;
-
+    // Info del titular
     ctx.textAlign = "left";
-    ctx.font = `bold 20px ${FONT_FAMILY}`;
-    ctx.fillStyle = "#000000";
-    ctx.fillText("Información del Titular", MARGIN, currentY);
-    currentY += 15;
-
-    const infoHeaders = ["DNI", "Nombres", "Apellidos", "Lado Consultado"];
-    const infoValues = [
-        principal.dni, 
-        principal.nombres, 
-        `${principal.apellido_paterno} ${principal.apellido_materno}`, 
-        side
-    ];
-
-    drawSimpleTable(ctx, MARGIN, currentY, width - (MARGIN * 2), infoHeaders, infoValues);
-    currentY += 80;
+    ctx.font = `bold 18px ${FONT_FAMILY}`;
+    ctx.fillText(`Titular: ${principal.nom} ${principal.ap} ${principal.am} (${principal.edad} años)`, MARGIN, 160);
+    ctx.font = `14px ${FONT_FAMILY}`;
+    ctx.fillText(`DNI: ${principal.dni}  |  Rama: ${side}  |  Sexo: ${principal.ge}`, MARGIN, 185);
 
     ctx.font = `bold 20px ${FONT_FAMILY}`;
-    ctx.fillStyle = "#000000";
-    ctx.fillText(title, MARGIN, currentY);
-    currentY += 15;
+    ctx.fillText(title, MARGIN, 230);
+    
+    return 240; // Retorna donde termina el header
+};
 
+const drawTableRows = (ctx, familiares, startY, width, height, MARGIN) => {
     const tableWidth = width - (MARGIN * 2);
-    const rowHeight = 35;
-    const colWidths = [0.25, 0.55, 0.20]; 
+    const rowHeight = 40;
+    // Columnas: Parentesco (20%), Nombre (40%), DNI (15%), Edad (10%), Verif (15%)
+    const colW = [0.18, 0.42, 0.15, 0.10, 0.15]; 
+    const headers = ["Parentesco", "Nombre Completo", "DNI", "Edad", "Relación"];
 
-    ctx.fillStyle = "#F0F0F0"; 
-    ctx.fillRect(MARGIN, currentY, tableWidth, rowHeight);
-    ctx.strokeStyle = "#CCCCCC";
-    ctx.strokeRect(MARGIN, currentY, tableWidth, rowHeight);
-    
+    // Dibujar Header de Tabla
     ctx.fillStyle = "#333333";
+    ctx.fillRect(MARGIN, startY, tableWidth, rowHeight);
+    ctx.fillStyle = "#FFFFFF";
     ctx.font = `bold 14px ${FONT_FAMILY}`;
-    ctx.fillText("Parentesco", MARGIN + 10, currentY + 22);
-    ctx.fillText("Nombre Completo", MARGIN + (tableWidth * colWidths[0]) + 10, currentY + 22);
-    ctx.fillText("DNI", MARGIN + (tableWidth * (colWidths[0] + colWidths[1])) + 10, currentY + 22);
-
-    currentY += rowHeight;
-    ctx.font = `13px ${FONT_FAMILY}`;
     
-    familiares.forEach((fam) => {
-        if (currentY > height - MARGIN) return;
-        ctx.fillStyle = "#FFFFFF";
+    let currentX = MARGIN;
+    headers.forEach((h, i) => {
+        ctx.fillText(h, currentX + 8, startY + 25);
+        currentX += tableWidth * colW[i];
+    });
+
+    let currentY = startY + rowHeight;
+
+    familiares.forEach((fam, index) => {
+        // Alternar color de filas
+        ctx.fillStyle = index % 2 === 0 ? "#FFFFFF" : "#F9F9F9";
         ctx.fillRect(MARGIN, currentY, tableWidth, rowHeight);
-        ctx.strokeStyle = "#CCCCCC"; 
+        ctx.strokeStyle = "#DDDDDD";
         ctx.strokeRect(MARGIN, currentY, tableWidth, rowHeight);
-        ctx.beginPath();
-        ctx.moveTo(MARGIN + (tableWidth * colWidths[0]), currentY);
-        ctx.lineTo(MARGIN + (tableWidth * colWidths[0]), currentY + rowHeight);
-        ctx.moveTo(MARGIN + (tableWidth * (colWidths[0] + colWidths[1])), currentY);
-        ctx.lineTo(MARGIN + (tableWidth * (colWidths[0] + colWidths[1])), currentY + rowHeight);
-        ctx.stroke();
+
         ctx.fillStyle = "#000000";
-        let parentesco = fam.tipo || fam.parentesco || "Familiar";
-        let nombre = `${fam.nombres || fam.nom} ${fam.apellido_paterno || fam.ap} ${fam.apellido_materno || fam.am}`;
-        let dni = fam.dni || fam.numDoc || "N/A";
-        ctx.fillText(parentesco.substring(0, 25), MARGIN + 10, currentY + 22);
-        ctx.fillText(nombre.substring(0, 45), MARGIN + (tableWidth * colWidths[0]) + 10, currentY + 22);
-        ctx.fillText(dni, MARGIN + (tableWidth * (colWidths[0] + colWidths[1])) + 10, currentY + 22);
+        ctx.font = `12px ${FONT_FAMILY}`;
+
+        const rowData = [
+            (fam.tipo || "Familiar").substring(0, 18),
+            `${fam.nom} ${fam.ap} ${fam.am}`.substring(0, 35),
+            fam.dni || "N/A",
+            `${fam.edad || ""}`,
+            fam.verificacion_relacion || "ALTA"
+        ];
+
+        let rowX = MARGIN;
+        rowData.forEach((text, i) => {
+            ctx.fillText(text, rowX + 8, currentY + 25);
+            rowX += tableWidth * colW[i];
+        });
+
         currentY += rowHeight;
     });
-
-    if (familiares.length === 0) {
-        ctx.fillStyle = "#666666";
-        ctx.textAlign = "center";
-        ctx.fillText("No se encontraron registros directos para esta rama familiar.", width / 2, currentY + 30);
-    }
 };
 
-const drawSimpleTable = (ctx, x, y, width, headers, values) => {
-    const rowHeight = 40;
-    const colWidth = width / headers.length;
-    ctx.fillStyle = "#F0F0F0";
-    ctx.fillRect(x, y, width, rowHeight / 2);
-    ctx.strokeStyle = "#CCCCCC";
-    ctx.strokeRect(x, y, width, rowHeight / 2);
-    ctx.fillStyle = "#FFFFFF";
-    ctx.fillRect(x, y + (rowHeight/2), width, rowHeight / 2);
-    ctx.strokeRect(x, y + (rowHeight/2), width, rowHeight / 2);
-    headers.forEach((h, i) => {
-        let cx = x + (i * colWidth);
-        ctx.fillStyle = "#333333";
-        ctx.font = `12px ${FONT_FAMILY}`;
-        ctx.fillText(h, cx + 10, y + 14);
-        ctx.fillStyle = "#000000";
-        ctx.font = `bold 12px ${FONT_FAMILY}`;
-        ctx.fillText(values[i] || "-", cx + 10, y + 14 + (rowHeight/2));
-        if (i > 0) {
-            ctx.beginPath();
-            ctx.moveTo(cx, y);
-            ctx.lineTo(cx, y + rowHeight);
-            ctx.stroke();
-        }
-    });
-};
+// ==============================================================================
+//  HOJA DE ESTADÍSTICAS (MEJORADA)
+// ==============================================================================
 
-/**
- * HOJA 3: DISEÑO COMPACTO Y RENUNCIA DE RESPONSABILIDAD
- */
 const drawStatsPage = async (ctx, width, height, stats) => {
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, width, height);
-    
-    const MARGIN = 40;
-    
-    // Título
-    ctx.fillStyle = "#222222";
-    ctx.textAlign = "right";
-    ctx.font = `bold 60px ${FONT_FAMILY}`;
-    ctx.fillText("GRÁFICOS", width - MARGIN, 100);
-    ctx.fillText("VISUALES", width - MARGIN, 160);
+    const MARGIN = 60;
 
-    // Indicadores de la izquierda
-    let startY = 100;
-    const items = [
-        { id: "01", text: "Total de Familiares encontrados.", color: "#FFF9C4" },
-        { id: "02", text: `Rama Paterna: ${stats.paternaCount} integrantes.`, color: "#DCEDC8" },
-        { id: "03", text: `Rama Materna: ${stats.maternaCount} integrantes.`, color: "#B2DFDB" },
-        { id: "04", text: `Hombres: ${stats.hombres} | Mujeres: ${stats.mujeres}`, color: "#4DB6AC" }
+    ctx.fillStyle = "#1A237E";
+    ctx.font = `bold 45px ${FONT_FAMILY}`;
+    ctx.textAlign = "left";
+    ctx.fillText("RESUMEN ANALÍTICO", MARGIN, 100);
+
+    // Cajas de estadísticas
+    const boxW = 220;
+    const boxH = 120;
+    const data = [
+        { label: "Total Registros", val: stats.total, color: "#E8EAF6" },
+        { label: "Hombres", val: stats.hombres, color: "#E3F2FD" },
+        { label: "Mujeres", val: stats.mujeres, color: "#FCE4EC" },
+        { label: "Rama Paterna", val: stats.paternaCount, color: "#E8F5E9" }
     ];
 
-    items.forEach((item, index) => {
-        const yPos = startY + (index * 100);
+    data.forEach((item, i) => {
+        const x = MARGIN + (i % 2) * (boxW + 40);
+        const y = 180 + Math.floor(i / 2) * (boxH + 40);
         ctx.fillStyle = item.color;
-        ctx.beginPath();
-        ctx.moveTo(MARGIN + 50, yPos);
-        ctx.lineTo(width / 2 - 20, yPos);
-        ctx.lineTo(width / 2 + 10, yPos + 35); 
-        ctx.lineTo(width / 2 - 20, yPos + 70);    
-        ctx.lineTo(MARGIN + 50, yPos + 70);
+        ctx.roundRect ? ctx.roundRect(x, y, boxW, boxH, 10) : ctx.fillRect(x, y, boxW, boxH);
         ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(MARGIN + 50, yPos + 35, 30, 0, 2 * Math.PI);
-        ctx.fillStyle = item.color;
-        ctx.fill();
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "#000000";
-        ctx.stroke();
-
         ctx.fillStyle = "#000000";
-        ctx.textAlign = "center";
-        ctx.font = `bold 20px ${FONT_FAMILY}`;
-        ctx.fillText(item.id, MARGIN + 50, yPos + 42);
-
-        ctx.textAlign = "left";
-        ctx.font = `13px ${FONT_FAMILY}`;
-        ctx.fillText(item.text, MARGIN + 90, yPos + 40);
+        ctx.font = `14px ${FONT_FAMILY}`;
+        ctx.fillText(item.label, x + 20, y + 40);
+        ctx.font = `bold 35px ${FONT_FAMILY}`;
+        ctx.fillText(item.val, x + 20, y + 90);
     });
 
-    // Gráfico de Barras
-    const chartX = width / 2 + 50;
-    const chartY = 220;
-    const chartW = (width / 2) - MARGIN - 50;
-    const chartH = 220;
-
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "#E0E0E0";
-    for(let i=0; i<=5; i++) {
-        let ly = chartY + (i * (chartH/5));
-        ctx.beginPath();
-        ctx.moveTo(chartX, ly);
-        ctx.lineTo(chartX + chartW, ly);
-        ctx.stroke();
-    }
-
-    const maxVal = Math.max(stats.paternaCount, stats.maternaCount, stats.hijosCount || 1);
-    const scale = chartH / (maxVal * 1.2); 
-    const barData = [
-        { label: "Pat.", val: stats.paternaCount, color: "#AED581" },
-        { label: "Mat.", val: stats.maternaCount, color: "#4DB6AC" },
-        { label: "Hijos", val: stats.hijosCount, color: "#00897B" }
-    ];
-    const barWidth = chartW / barData.length - 20;
-
-    barData.forEach((bar, i) => {
-        let bx = chartX + 10 + (i * (barWidth + 20));
-        let bh = bar.val * scale;
-        let by = chartY + chartH - bh;
-        ctx.fillStyle = bar.color;
-        ctx.fillRect(bx, by, barWidth, bh);
-        ctx.fillStyle = "#000000";
-        ctx.textAlign = "center";
-        ctx.font = `bold 11px ${FONT_FAMILY}`;
-        ctx.fillText(bar.label, bx + barWidth/2, chartY + chartH + 15);
-    });
-
-    // --- SECCIÓN DE DONAS (Subidas para reducir espacio) ---
-    const donutsY = 600; // Posición más arriba
-    const donutRadius = 50;
-    const total = (stats.paternaCount + stats.maternaCount + stats.hijosCount) || 1;
-    
-    const donuts = [
-        { p: Math.round((stats.paternaCount/total)*100), label: "% Paterno", color: "#FFF59D" },
-        { p: Math.round((stats.maternaCount/total)*100), label: "% Materno", color: "#AED581" },
-        { p: Math.round((stats.hombres/(stats.hombres+stats.mujeres))*100), label: "% Hombres", color: "#4DB6AC" },
-        { p: Math.round((stats.mujeres/(stats.hombres+stats.mujeres))*100), label: "% Mujeres", color: "#00897B" }
-    ];
-
-    const donutSpacing = width / 4;
-    donuts.forEach((d, i) => {
-        let cx = (donutSpacing * i) + (donutSpacing/2);
-        ctx.beginPath();
-        ctx.arc(cx, donutsY, donutRadius, 0, 2*Math.PI);
-        ctx.fillStyle = "#F0F0F0";
-        ctx.fill();
-
-        let startAngle = -0.5 * Math.PI;
-        let endAngle = ((d.p / 100) * 2 * Math.PI) + startAngle;
-        ctx.beginPath();
-        ctx.arc(cx, donutsY, donutRadius, startAngle, endAngle);
-        ctx.lineWidth = 12;
-        ctx.strokeStyle = d.color;
-        ctx.stroke();
-
-        ctx.fillStyle = "#000000";
-        ctx.textAlign = "center";
-        ctx.font = `bold 18px ${FONT_FAMILY}`;
-        ctx.fillText(`${d.p}%`, cx, donutsY + 7);
-        ctx.font = `11px ${FONT_FAMILY}`;
-        ctx.fillText(d.label, cx, donutsY + donutRadius + 20);
-    });
-
-    // --- RENUNCIA DE RESPONSABILIDAD (Pie de página) ---
-    const footerY = height - 100;
-    ctx.strokeStyle = "#EEEEEE";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(MARGIN, footerY - 20);
-    ctx.lineTo(width - MARGIN, footerY - 20);
-    ctx.stroke();
-
-    ctx.fillStyle = "#777777";
-    ctx.textAlign = "center";
+    // Disclaimer
+    ctx.fillStyle = "#999999";
     ctx.font = `italic 12px ${FONT_FAMILY}`;
-    const disclaimer = [
-        "Este documento es de carácter informativo y ha sido generado automáticamente basándose en registros públicos disponibles.",
-        "La exactitud de las relaciones de parentesco depende de la fuente de datos original. El sistema no garantiza la veracidad absoluta.",
-        "Queda prohibido el uso de esta información para fines ilícitos o de acoso. El usuario asume toda la responsabilidad por su uso."
-    ];
-    disclaimer.forEach((line, idx) => {
-        ctx.fillText(line, width / 2, footerY + (idx * 18));
-    });
+    ctx.textAlign = "center";
+    ctx.fillText("Este reporte incluye la totalidad de coincidencias encontradas en la base de datos.", width/2, height - 60);
 };
 
 // ==============================================================================
-//  LÓGICA DE DATOS Y ENDPOINTS
+//  LÓGICA DE PROCESAMIENTO
 // ==============================================================================
 
-function clasificarFamilia(principal, familiares) {
+function clasificarFamilia(familiares) {
     const paterna = [];
     const materna = [];
-    const hijos = [];
-    const otros = [];
-    const apePatPrincipal = (principal.apellido_paterno || '').trim().toUpperCase();
-    const apeMatPrincipal = (principal.apellido_materno || '').trim().toUpperCase();
-
+    
     familiares.forEach(fam => {
-        const tipo = (fam.tipo || fam.parentesco || '').toUpperCase();
-        const apePatFam = (fam.apellido_paterno || fam.ap || '').trim().toUpperCase();
-        const apeMatFam = (fam.apellido_materno || fam.am || '').trim().toUpperCase();
-        if (tipo.includes("PADRE") || tipo.includes("ABUELO") || tipo.includes("TIO")) {
-            if (tipo.includes("MATERN")) materna.push(fam); else paterna.push(fam);
-        } else if (tipo.includes("MADRE") || tipo.includes("ABUELA") || tipo.includes("TIA")) {
-             if (tipo.includes("PATERN")) paterna.push(fam); else materna.push(fam);
-        } else if (tipo.includes("HIJO") || tipo.includes("HIJA")) {
-            hijos.push(fam); paterna.push(fam); 
-        } else if (tipo.includes("HERMANO") || tipo.includes("HERMANA")) {
+        const tipo = (fam.tipo || "").toUpperCase();
+        if (tipo.includes("PATERNO") || tipo.includes("PADRE") || tipo.includes("HERMANO")) {
             paterna.push(fam);
+        } else if (tipo.includes("MATERNO") || tipo.includes("MADRE")) {
+            materna.push(fam);
         } else {
-            if (apePatFam === apePatPrincipal || apeMatFam === apePatPrincipal) {
-                paterna.push(fam);
-            } else if (apePatFam === apeMatPrincipal || apeMatFam === apeMatPrincipal) {
-                materna.push(fam);
-            } else { otros.push(fam); }
+            paterna.push(fam); // Por defecto
         }
     });
-    otros.forEach(o => materna.push(o));
-    return { paterna, materna, hijos };
+    return { paterna, materna };
 }
+
+// ==============================================================================
+//  ENDPOINTS
+// ==============================================================================
 
 app.get("/consultar-arbol", async (req, res) => {
     const dni = req.query.dni;
-    if (!dni || dni.length !== 8) return res.status(400).json({ error: "DNI inválido" });
+    if (!dni) return res.status(400).json({ error: "DNI requerido" });
+
     try {
         const response = await axios.get(`${ARBOL_GENEALOGICO_API_URL}?dni=${dni}`);
-        const data = response.data?.result?.person;
-        if (!data) return res.status(404).json({ error: "Datos no encontrados" });
-        const pdfDirectUrl = `${API_BASE_URL}/descargar-arbol-pdf?dni=${dni}`;
-        const finalUrl = `${API_BASE_URL}/descargar-ficha?url=${encodeURIComponent(pdfDirectUrl)}`;
+        const person = response.data?.result?.person;
+        if (!person) return res.status(404).json({ error: "No encontrado" });
+
+        const pdfUrl = `${API_BASE_URL}/descargar-arbol-pdf?dni=${dni}`;
         res.json({
-            "dni": data.dni,
-            "apellidos": `${data.apellido_paterno} ${data.apellido_materno}`.trim(),
-            "nombres": data.nombres,
+            "dni": person.dni,
+            "apellidos": `${person.ap} ${person.am}`,
+            "nombres": person.nom,
             "estado": "FICHA GENERADA EXITOSAMENTE",
-            "archivo": { "tipo": "PDF", "url": finalUrl }
+            "archivo": {
+                "tipo": "PDF",
+                "url": `${API_BASE_URL}/descargar-ficha?url=${encodeURIComponent(pdfUrl)}`
+            }
         });
-    } catch (error) {
-        res.status(500).json({ error: "Error al obtener la información" });
-    }
+    } catch (e) { res.status(500).json({ error: "Error de servidor" }); }
 });
 
-app.get("/descargar-ficha", async (req, res) => {
-    const fileUrl = req.query.url;
-    if (!fileUrl) return res.status(400).send("Falta el parámetro URL");
-    res.redirect(fileUrl);
-});
+app.get("/descargar-ficha", (req, res) => res.redirect(req.query.url));
 
 app.get("/descargar-arbol-pdf", async (req, res) => {
     const dni = req.query.dni;
-    if (!dni || dni.length !== 8) return res.status(400).send("DNI inválido.");
     try {
         const response = await axios.get(`${ARBOL_GENEALOGICO_API_URL}?dni=${dni}`);
-        const data = response.data?.result;
-        if (!data || !data.person) return res.status(404).send("No se encontraron datos.");
-        const principal = data.person;
-        const familiares = (data.coincidences || []).map(f => ({
-            ...f,
-            nombres: f.nombres || f.nom,
-            apellido_paterno: f.apellido_paterno || f.ap,
-            apellido_materno: f.apellido_materno || f.am,
-            dni: f.dni || f.numDoc,
-            tipo: f.tipo || f.parentesco
-        }));
+        const result = response.data.result;
+        const familiares = result.coincidences || [];
+        const principal = result.person;
 
-        const { paterna, materna, hijos } = clasificarFamilia(principal, familiares);
-        const stats = {
-            paternaCount: paterna.length,
-            maternaCount: materna.length,
-            hijosCount: hijos.length,
-            otrosCount: familiares.length - (paterna.length + materna.length),
-            hombres: familiares.filter(f => (f.sexo || '').toUpperCase() === 'M' || (f.tipo || '').endsWith('O')).length, 
-            mujeres: familiares.filter(f => (f.sexo || '').toUpperCase() === 'F' || (f.tipo || '').endsWith('A')).length
-        };
-        
+        const { paterna, materna } = clasificarFamilia(familiares);
+
         const doc = new PDFDocument({ autoFirstPage: false });
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=Arbol_Genealogico_${dni}.pdf`);
         doc.pipe(res);
 
-        const A4_WIDTH = 595.28;
-        const A4_HEIGHT = 841.89;
-        const SCALE = 2; 
-        const C_W = A4_WIDTH * SCALE;
-        const C_H = A4_HEIGHT * SCALE;
+        const A4_W = 595.28;
+        const A4_H = 841.89;
+        const SCALE = 2;
+        const MARGIN = 40;
 
-        const canvas1 = createCanvas(C_W, C_H);
-        await drawFamilyListPage(canvas1.getContext("2d"), C_W, C_H, "FAMILIA PATERNA", principal, paterna, "Rama Paterna");
-        doc.addPage({ size: 'A4' });
-        doc.image(canvas1.toBuffer(), 0, 0, { width: A4_WIDTH, height: A4_HEIGHT });
+        // Función para procesar listas largas en múltiples páginas
+        const processList = async (lista, titulo, rama) => {
+            const itemsPerPage = 15;
+            for (let i = 0; i < lista.length; i += itemsPerPage) {
+                const chunk = lista.slice(i, i + itemsPerPage);
+                const canvas = createCanvas(A4_W * SCALE, A4_H * SCALE);
+                const ctx = canvas.getContext("2d");
+                ctx.scale(SCALE, SCALE);
+                
+                const nextY = drawFamilyHeader(ctx, A4_W, `${titulo} (Parte ${Math.floor(i/itemsPerPage)+1})`, principal, rama, MARGIN);
+                drawTableRows(ctx, chunk, nextY, A4_W, A4_H, MARGIN);
+                
+                doc.addPage({ size: 'A4' });
+                doc.image(canvas.toBuffer(), 0, 0, { width: A4_W, height: A4_H });
+            }
+        };
 
-        const canvas2 = createCanvas(C_W, C_H);
-        await drawFamilyListPage(canvas2.getContext("2d"), C_W, C_H, "FAMILIA MATERNA", principal, materna, "Rama Materna");
-        doc.addPage({ size: 'A4' });
-        doc.image(canvas2.toBuffer(), 0, 0, { width: A4_WIDTH, height: A4_HEIGHT });
+        // Página Paterna
+        await processList(paterna, "RAMA PATERNA Y HERMANOS", "Paterna");
+        // Página Materna
+        await processList(materna, "RAMA MATERNA", "Materna");
 
-        const canvas3 = createCanvas(C_W, C_H);
-        await drawStatsPage(canvas3.getContext("2d"), C_W, C_H, stats);
+        // Página de Estadísticas
+        const statsCanvas = createCanvas(A4_W * SCALE, A4_H * SCALE);
+        const statsCtx = statsCanvas.getContext("2d");
+        statsCtx.scale(SCALE, SCALE);
+        await drawStatsPage(statsCtx, A4_W, A4_H, {
+            total: familiares.length,
+            paternaCount: paterna.length,
+            maternaCount: materna.length,
+            hombres: familiares.filter(f => f.ge === "MASCULINO").length,
+            mujeres: familiares.filter(f => f.ge === "FEMENINO").length
+        });
         doc.addPage({ size: 'A4' });
-        doc.image(canvas3.toBuffer(), 0, 0, { width: A4_WIDTH, height: A4_HEIGHT });
+        doc.image(statsCanvas.toBuffer(), 0, 0, { width: A4_W, height: A4_H });
 
         doc.end();
-    } catch (error) {
-        if (!res.headersSent) res.status(500).send("Error interno.");
+    } catch (e) { 
+        console.error(e);
+        res.status(500).send("Error al generar PDF"); 
     }
 });
 
-app.listen(PORT, () => console.log(`Iniciado en ${PORT}`));
+app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
