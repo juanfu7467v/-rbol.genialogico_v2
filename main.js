@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// --- CONFIGURACIÓN DE APIS ---
+// CONFIGURACIÓN DE APIS
 const API_BASE_URL = process.env.API_BASE_URL || "https://gdni-imagen-v2.fly.dev";
 const ARBOL_GENEALOGICO_API_URL = process.env.ARBOL_GENEALOGICO_API_URL || "https://consulta-pe-imagenes-v2.fly.dev/consultar-arbol";
 
@@ -22,9 +22,7 @@ const COLORS = {
     BG_LIGHT: "#F4F7F6"
 };
 
-// =============================================================
-//  FUNCIONES DE APOYO Y CLASIFICACIÓN
-// =============================================
+// FUNCIONES DE APOYO Y CLASIFICACIÓN
 
 function clasificarFamilia(coincidences) {
     const grupos = {
@@ -49,9 +47,7 @@ function clasificarFamilia(coincidences) {
     return grupos;
 }
 
-// =============================================
-//  DIBUJO DE COMPONENTES PDF
-// =============================================
+// DIBUJO DE COMPONENTES PDF
 
 function drawHeader(doc, title) {
     doc.rect(0, 0, 612, 50).fill(COLORS.DIRECTA);
@@ -102,9 +98,7 @@ function draw3DBar(doc, x, y, label, value, maxValue, color) {
     doc.fillColor("#333333").fontSize(9).font("Helvetica-Bold").text(`${label}: ${value}`, x, y + 20);
 }
 
-// =============================================
-//  ENDPOINTS
-// =============================================
+// ENDPOINTS
 
 app.get("/consultar-arbol", async (req, res) => {
     const dni = req.query.dni;
@@ -138,7 +132,7 @@ app.get("/descargar-arbol-pdf", async (req, res) => {
         const grupos = clasificarFamilia(data.coincidences);
         const p = data.person;
 
-        // --- PÁGINA 1: TITULAR Y LEYENDA ---
+        // PÁGINA 1: TITULAR Y LEYENDA
         drawHeader(doc, "REPORTE GENEALÓGICO PROFESIONAL");
         
         // Cuadro Titular Destacado
@@ -162,7 +156,7 @@ app.get("/descargar-arbol-pdf", async (req, res) => {
             doc.fillColor("#555").text(l.t, 70 + (i * 130), 251);
         });
 
-        // --- FAMILIA DIRECTA EN PÁGINA 1 ---
+        // FAMILIA DIRECTA EN PÁGINA 1
         doc.fillColor(COLORS.DIRECTA).fontSize(14).font("Helvetica-Bold").text("FAMILIA DIRECTA", 40, 310);
         let currentY = 330;
         let currentX = 40;
@@ -172,7 +166,7 @@ app.get("/descargar-arbol-pdf", async (req, res) => {
             currentX += 180;
         });
 
-        // --- PÁGINA 2: RAMA PATERNA ---
+        // PÁGINA 2: RAMA PATERNA
         doc.addPage();
         drawHeader(doc, "RAMA GENEALÓGICA PATERNA");
         currentY = 80; currentX = 40;
@@ -183,7 +177,7 @@ app.get("/descargar-arbol-pdf", async (req, res) => {
             currentX += 180;
         });
 
-        // --- PÁGINA 3: RAMA MATERNA ---
+        // PÁGINA 3: RAMA MATERNA
         doc.addPage();
         drawHeader(doc, "RAMA GENEALÓGICA MATERNA");
         currentY = 80; currentX = 40;
@@ -194,7 +188,7 @@ app.get("/descargar-arbol-pdf", async (req, res) => {
             currentX += 180;
         });
 
-        // --- PÁGINA 4: ESTADÍSTICAS 3D ---
+        // PÁGINA 4: ESTADÍSTICAS 3D
         doc.addPage();
         drawHeader(doc, "RESUMEN ESTADÍSTICO DINÁMICO");
         
@@ -214,15 +208,15 @@ app.get("/descargar-arbol-pdf", async (req, res) => {
 
         // Gráfico de Edades
         doc.fontSize(14).text("Rangos de Edad", 40, 240);
-        draw3DBar(doc, 40, 270, "Menores (<18)", menores, total, "#F1C40F");
+        draw3DBar(doc, 40, 270, "Menores (18)", menores, total, "#F1C40F");
         draw3DBar(doc, 40, 310, "Adultos (18-60)", adultos, total, "#2ECC71");
-        draw3DBar(doc, 40, 350, "Adultos Mayores (>60)", mayores, total, "#E67E22");
+        draw3DBar(doc, 40, 350, "Adultos Mayores (60)", mayores, total, "#E67E22");
 
         // Verificación
         doc.rect(40, 420, 532, 50).fill("#D4EFDF");
         doc.fillColor("#145A32").fontSize(11).text("NIVEL DE VERIFICACIÓN DE RELACIONES: ALTA", 60, 440);
 
-        // --- RENUNCIA DE RESPONSABILIDAD (En la última página) ---
+        // RENUNCIA DE RESPONSABILIDAD (En la última página)
         doc.rect(40, 650, 532, 90).fill("#F2F3F4");
         doc.fillColor("#7F8C8D").fontSize(8).font("Helvetica-Oblique");
         const disclaimer = [
