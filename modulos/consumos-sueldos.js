@@ -222,12 +222,8 @@ app.get("/", (req, res) => {
     });
 });
 
-if (require.main === module) {
-    app.listen(PORT, HOST, () => {
-        console.log(`Servidor PDF con QR optimizado activo en http://${HOST}:${PORT}`);
-        console.log(`SUELDOS_API_URL: ${SUELDOS_API_URL ? "Configurada" : "Usando valor por defecto"}`);
-        console.log(`CONSUMOS_API_URL: ${CONSUMOS_API_URL ? "Configurada" : "Usando valor por defecto"}`);
-    });
-}
-
-module.exports = app;
+app.listen(PORT, HOST, () => {
+    console.log(`Servidor PDF con QR optimizado activo en http://${HOST}:${PORT}`);
+    console.log(`SUELDOS_API_URL: ${SUELDOS_API_URL ? "Configurada" : "Usando valor por defecto"}`);
+    console.log(`CONSUMOS_API_URL: ${CONSUMOS_API_URL ? "Configurada" : "Usando valor por defecto"}`);
+});
